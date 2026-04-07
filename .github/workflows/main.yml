@@ -1,0 +1,26 @@
+name: Build_Courier_APK
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Build APK
+        run: |
+          flutter pub get
+          # Собираем универсальный APK для курьера
+          flutter build apk --release --no-tree-shake-icons
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          # Поменял имя артефакта, чтобы ты понимал, что это курьер
+          name: courier_app_android 
+          path: build/app/outputs/flutter-apk/app-release.apk
