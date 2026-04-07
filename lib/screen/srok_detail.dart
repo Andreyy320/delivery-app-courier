@@ -21,7 +21,7 @@ class SrokOrderDetailScreen extends StatefulWidget {
 class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
   bool loading = false;
 
-  // 🔹 Универсальная функция действия (как в твоем примере с едой)
+  // 🔹 Логика без изменений
   Future<void> _takeAction(String action) async {
     setState(() => loading = true);
     try {
@@ -29,9 +29,8 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
       if (!snap.exists) throw Exception('Заказ не найден');
       final data = snap.data() as Map<String, dynamic>;
 
-      // Получаем userId клиента, чтобы знать, какой путь к папке пользователя
       final userId = data['userId'];
-      if (userId == null) throw Exception('ID пользователя не найден в заказе');
+      if (userId == null) throw Exception('ID пользователя не найден');
 
       final actionTime = FieldValue.serverTimestamp();
 
@@ -42,34 +41,26 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
         'updatedAt': actionTime,
       };
 
-      // Проставляем метки времени для прогресс-бара
-      if (action == 'accepted' && data['acceptedAt'] == null) {
-        updateData['acceptedAt'] = actionTime;
-      }
-      if (action == 'inProgress' && data['inProgressAt'] == null) {
-        updateData['inProgressAt'] = actionTime;
-      }
+      if (action == 'accepted' && data['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
+      if (action == 'inProgress' && data['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
       if (action == 'delivered') {
         if (data['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
         if (data['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
         updateData['deliveredAt'] = actionTime;
       }
 
-      // --- ВЫПОЛНЯЕМ ЗАПИСЬ В 3 МЕСТА ---
-
-      // 1. Обновляем основной заказ (тот, что курьер нашел через collectionGroup)
+      // 1. Основной заказ
       await widget.orderRef.update(updateData);
 
-      // 2. ОБНОВЛЯЕМ У КЛИЕНТА (чтобы у него в приложении всё сработало)
-      // Путь: users / {userId} / delivery_orders / {orderId}
+      // 2. У КЛИЕНТА
       await FirebaseFirestore.instance
           .collection('users')
           .doc(userId)
           .collection('delivery_orders')
           .doc(widget.orderRef.id)
-          .update(updateData); // Используем update, так как заказ там точно есть
+          .update(updateData);
 
-      // 3. Записываем в историю курьера
+      // 3. История курьера
       if (['accepted', 'inProgress', 'delivered'].contains(action)) {
         await FirebaseFirestore.instance
             .collection('couriers')
@@ -86,14 +77,18 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Статус обновлён: ${_statusToRussian(action)}')),
+          SnackBar(
+            content: Text('Статус обновлён: ${_statusToRussian(action)}'),
+            backgroundColor: Colors.red[900],
+            behavior: SnackBarBehavior.floating,
+          ),
         );
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка обновления: $e')),
+          SnackBar(content: Text('Ошибка обновления: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -115,9 +110,19 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: const Text('Детали срочного заказа'),
-        backgroundColor: Colors.deepOrange,
+        title: const Text('Срочная доставка', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.red[900],
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Center(child: _urgencyBadge()),
+          ),
+        ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: widget.orderRef.snapshots(),
@@ -126,82 +131,230 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
           if (!snapshot.hasData || !snapshot.data!.exists) return const Center(child: Text('Заказ не найден'));
 
           final data = snapshot.data!.data() as Map<String, dynamic>;
-
           final status = data['status'] ?? 'new';
-          final createdAt = data['createdAt'] as Timestamp?;
-          final createdTime = createdAt != null ? DateFormat('dd.MM.yyyy HH:mm').format(createdAt.toDate()) : '';
 
-          // Времена из БД
-          final acceptedAt = data['acceptedAt'] as Timestamp?;
-          final inProgressAt = data['inProgressAt'] as Timestamp?;
-          final deliveredAt = data['deliveredAt'] as Timestamp?;
-
-          return Padding(
-            padding: const EdgeInsets.all(16),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Заказ №${widget.orderRef.id.substring(0, 6)}',
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  const Divider(),
-                  _infoRow('Клиент', data['clientName'] ?? '-'),
-                  _infoRow('Телефон', data['clientPhone'] ?? '-'),
-                  _infoRow('Откуда', data['fromAddress'] ?? '-'),
-                  _infoRow('Куда', data['toAddress'] ?? '-'),
-                  _infoRow('Сумма', '${data['totalCost'] ?? 0} ₽'),
-                  _infoRow('Создан', createdTime),
-
-                  if (data['comment'] != null && data['comment'].toString().isNotEmpty)
-                    _infoRow('Комментарий', data['comment']),
-
-                  const SizedBox(height: 16),
-                  const Text('История статусов:', style: TextStyle(fontWeight: FontWeight.bold)),
-                  if (acceptedAt != null) Text('✅ Принят: ${DateFormat('HH:mm').format(acceptedAt.toDate())}'),
-                  if (inProgressAt != null) Text('🚚 В пути: ${DateFormat('HH:mm').format(inProgressAt.toDate())}'),
-                  if (deliveredAt != null) Text('🏁 Доставлен: ${DateFormat('HH:mm').format(deliveredAt.toDate())}'),
-
-                  const SizedBox(height: 24),
-
-                  // 🔹 КНОПКИ ДЕЙСТВИЙ (по логике как в еде)
-                  if (status == 'new') ...[
-                    _actionButton('Принять заказ', Colors.deepOrange, () => _takeAction('accepted')),
-                    const SizedBox(height: 8),
-                    _actionButton('Отменить', Colors.red, () => _takeAction('cancelled')),
-                  ],
-                  if (status == 'accepted')
-                    _actionButton('Начать путь (В пути)', Colors.orange, () => _takeAction('inProgress')),
-                  if (status == 'inProgress')
-                    _actionButton('Доставлено', Colors.green, () => _takeAction('delivered')),
-                ],
+          return Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      _buildHeaderCard(data),
+                      const SizedBox(height: 16),
+                      _buildAddressCard(data),
+                      const SizedBox(height: 16),
+                      _buildTimelineCard(data),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              _buildBottomPanel(status, data),
+            ],
           );
         },
       ),
     );
   }
 
-  Widget _infoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Text('$label: $value', style: const TextStyle(fontSize: 16)),
+  Widget _urgencyBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
     );
   }
 
-  Widget _actionButton(String text, Color color, VoidCallback onPressed) {
+  Widget _buildHeaderCard(Map<String, dynamic> data) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Заказ №${widget.orderRef.id.substring(0, 6)}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('${data['totalCost'] ?? 0} ₽',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.red[900])),
+            ],
+          ),
+          const Divider(height: 32),
+          _infoRow(Icons.person_pin_outlined, 'Клиент', data['clientName'] ?? '-'),
+          _infoRow(Icons.phone_android_outlined, 'Телефон', data['clientPhone'] ?? '-'),
+          if (data['comment']?.isNotEmpty == true) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(12)),
+              child: _infoRow(Icons.comment_outlined, 'Инфо', data['comment'], color: Colors.brown[700]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddressCard(Map<String, dynamic> data) {
+    // Извлекаем данные из твоих полей pickup и dropoff
+    final pickup = data['pickup'] as Map<String, dynamic>?;
+    final dropoff = data['dropoff'] as Map<String, dynamic>?;
+
+    // Формируем строку с координатами для отображения
+    final fromStr = pickup != null
+        ? '${pickup['lat'].toStringAsFixed(6)}, ${pickup['lng'].toStringAsFixed(6)}'
+        : 'Координаты не указаны';
+
+    final toStr = dropoff != null
+        ? '${dropoff['lat'].toStringAsFixed(6)}, ${dropoff['lng'].toStringAsFixed(6)}'
+        : 'Координаты не указаны';
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
+      ),
+      child: Column(
+        children: [
+          _addressRow(
+              Icons.location_on_outlined,
+              Colors.red[900]!,
+              'ТОЧКА ОТПРАВКИ (PICKUP)',
+              fromStr,
+              pickup // передаем мапу для кнопки навигации
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 11),
+            child: Container(height: 25, width: 2, color: Colors.grey[100]),
+          ),
+          _addressRow(
+              Icons.flag_outlined,
+              Colors.black,
+              'ТОЧКА ДОСТАВКИ (DROPOFF)',
+              toStr,
+              dropoff
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Обновленный ряд с кнопкой навигатора
+  Widget _addressRow(IconData icon, Color color, String label, String address, Map<String, dynamic>? coords) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 22),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
+              Text(address, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+        if (coords != null)
+          IconButton(
+            icon: const Icon(Icons.map_outlined, color: Colors.blue),
+            onPressed: () {
+              // Здесь в будущем добавишь launchUrl для открытия карт
+              // MapsLauncher.launchCoordinates(coords['lat'], coords['lng']);
+              ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Открываем навигатор...'))
+              );
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildTimelineCard(Map<String, dynamic> data) {
+    final acceptedAt = data['acceptedAt'] as Timestamp?;
+    final inProgressAt = data['inProgressAt'] as Timestamp?;
+    final deliveredAt = data['deliveredAt'] as Timestamp?;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('СТАТУС ВЫПОЛНЕНИЯ', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+          const SizedBox(height: 16),
+          _statusStep('Заказ принят', acceptedAt),
+          _statusStep('Курьер в пути', inProgressAt),
+          _statusStep('Доставлено', deliveredAt, isLast: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String label, String value, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color ?? Colors.grey[400]),
+          const SizedBox(width: 10),
+          Text('$label: ', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+          Expanded(child: Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color ?? Colors.black87))),
+        ],
+      ),
+    );
+  }
+
+
+
+  Widget _statusStep(String title, Timestamp? time, {bool isLast = false}) {
+    return Row(
+      children: [
+        Icon(time != null ? Icons.check_circle : Icons.circle_outlined,
+            size: 16, color: time != null ? Colors.green : Colors.grey[200]),
+        const SizedBox(width: 12),
+        Text(title, style: TextStyle(color: time != null ? Colors.black87 : Colors.grey, fontSize: 13)),
+        const Spacer(),
+        if (time != null) Text(DateFormat('HH:mm').format(time.toDate()), style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
+    );
+  }
+
+  Widget _buildBottomPanel(String status, Map<String, dynamic> data) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 32),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status == 'new') ...[
+            _btn('ПРИНЯТЬ СРОЧНЫЙ ЗАКАЗ', Colors.red[900]!, () => _takeAction('accepted')),
+            const SizedBox(height: 8),
+            TextButton(onPressed: () => _takeAction('cancelled'), child: const Text('Отклонить', style: TextStyle(color: Colors.grey))),
+          ],
+          if (status == 'accepted') _btn('НАЧАТЬ ПУТЬ', Colors.orange[800]!, () => _takeAction('inProgress')),
+          if (status == 'inProgress') _btn('ПОДТВЕРДИТЬ ДОСТАВКУ', Colors.green[700]!, () => _takeAction('delivered')),
+        ],
+      ),
+    );
+  }
+
+  Widget _btn(String text, Color color, VoidCallback onTap) {
     return SizedBox(
       width: double.infinity,
+      height: 56,
       child: ElevatedButton(
-        onPressed: loading ? null : onPressed,
-        style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
-        ),
-        child: loading
-            ? const CircularProgressIndicator(color: Colors.white)
-            : Text(text, style: const TextStyle(color: Colors.white, fontSize: 16)),
+        onPressed: loading ? null : onTap,
+        style: ElevatedButton.styleFrom(backgroundColor: color, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
+        child: loading ? const CircularProgressIndicator(color: Colors.white) : Text(text, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
       ),
     );
   }

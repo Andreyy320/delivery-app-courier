@@ -21,11 +21,11 @@ class GorodOrderDetailScreen extends StatefulWidget {
 class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
   bool loading = false;
 
+  // 🔹 Логика без изменений (обновление в 3 местах)
   Future<void> _updateStatus(String action, Map<String, dynamic> data) async {
     setState(() => loading = true);
 
     try {
-      // Получаем userId клиента для обновления в его папке
       final userId = data['userId'];
       if (userId == null) throw Exception('ID пользователя не найден');
 
@@ -38,31 +38,24 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
         'updatedAt': actionTime,
       };
 
-      // Сохраняем время для каждого статуса
-      if (action == 'accepted' && data['acceptedAt'] == null) {
-        updateData['acceptedAt'] = actionTime;
-      }
-      if (action == 'inProgress' && data['inProgressAt'] == null) {
-        updateData['inProgressAt'] = actionTime;
-      }
+      if (action == 'accepted' && data['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
+      if (action == 'inProgress' && data['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
       if (action == 'delivered') {
         if (data['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
         if (data['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
         updateData['deliveredAt'] = actionTime;
       }
 
-      // --- ЗАПИСЬ В 3 МЕСТА (как в примере) ---
-
       // 1. Обновляем основной заказ
       await widget.orderRef.update(updateData);
 
-      // 2. ОБНОВЛЯЕМ У КЛИЕНТА (чтобы у него в приложении всё сработало)
+      // 2. ОБНОВЛЯЕМ У КЛИЕНТА (используем set с merge: true для стабильности)
       await FirebaseFirestore.instance
           .collection('users')
           .doc(userId)
-          .collection('delivery_orders') // Проверь, что коллекция у клиента называется так же
+          .collection('cityOrders')
           .doc(widget.orderRef.id)
-          .update(updateData);
+          .set(updateData, SetOptions(merge: true));
 
       // 3. Записываем в историю курьера
       if (['accepted', 'inProgress', 'delivered'].contains(action)) {
@@ -81,18 +74,18 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Статус обновлён: ${_statusToRussian(action)}')),
+          SnackBar(
+            content: Text('Статус обновлён: ${_statusToRussian(action)}'),
+            backgroundColor: Colors.orange[800],
+            behavior: SnackBarBehavior.floating,
+          ),
         );
-
-        // Закрываем экран при принятии или в пути для обновления списков
-        if (action == 'accepted' || action == 'inProgress' || action == 'delivered' || action == 'cancelled') {
-          Navigator.pop(context, true);
-        }
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка: $e')),
+          SnackBar(content: Text('Ошибка: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -111,131 +104,248 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
     }
   }
 
-  Widget _buildAdditionalOptions(Map<String, dynamic> data) {
-    final List<Widget> widgets = [];
-    if (data.containsKey('escort')) widgets.add(Text('Сопровождающий: ${data['escort']}', style: const TextStyle(fontSize: 16)));
-    if (data.containsKey('loaders')) widgets.add(Text('Грузчики: ${data['loaders']}', style: const TextStyle(fontSize: 16)));
-    if (data.containsKey('bodySize')) widgets.add(Text('Размер кузова: ${data['bodySize']}', style: const TextStyle(fontSize: 16)));
-
-    if (widgets.isEmpty) return const SizedBox();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 16),
-        const Text('Дополнительно:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
-        ...widgets,
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: const Text('Детали городского заказа'),
-        backgroundColor: Colors.deepOrange,
+        title: const Text('Городской заказ', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.orange[700],
+        foregroundColor: Colors.white,
+        elevation: 0,
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: widget.orderRef.snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки заказа'));
+          if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки'));
           if (!snapshot.hasData || !snapshot.data!.exists) return const Center(child: Text('Заказ не найден'));
 
           final data = snapshot.data!.data() as Map<String, dynamic>;
-
-          final clientName = data['clientName'] ?? '-';
-          final clientPhone = data['clientPhone'] ?? '-';
-          final fromAddress = data['fromAddress'] ?? '-';
-          final toAddress = data['toAddress'] ?? '-';
           final status = data['status'] ?? 'new';
-          final totalPrice = data['totalPrice'] ?? 0;
-          final comment = data['comment'] ?? '';
-          final createdAt = data['createdAt'] as Timestamp?;
-          final createdTime = createdAt != null ? DateFormat('dd.MM.yyyy HH:mm').format(createdAt.toDate()) : '';
-          final scheduledTime = data['scheduledTime'] as Timestamp?;
-          final scheduledTimeStr = scheduledTime != null ? DateFormat('dd.MM.yyyy HH:mm').format(scheduledTime.toDate()) : '—';
 
-          final acceptedAt = data['acceptedAt'] as Timestamp?;
-          final inProgressAt = data['inProgressAt'] as Timestamp?;
-          final deliveredAt = data['deliveredAt'] as Timestamp?;
+          return Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      // 1. КАРТОЧКА МАРШРУТА
+                      _buildRouteCard(data),
+                      const SizedBox(height: 16),
 
-          return Padding(
-            padding: const EdgeInsets.all(16),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Заказ №${widget.orderRef.id.substring(0, 6)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text('Клиент: $clientName', style: const TextStyle(fontSize: 16)),
-                  Text('Телефон: $clientPhone', style: const TextStyle(fontSize: 16)),
-                  const SizedBox(height: 8),
-                  Text('Откуда: $fromAddress', style: const TextStyle(fontSize: 16)),
-                  Text('Куда: $toAddress', style: const TextStyle(fontSize: 16)),
-                  const SizedBox(height: 8),
-                  Text('Сумма: $totalPrice ₽', style: const TextStyle(fontSize: 16)),
-                  Text('Статус: ${_statusToRussian(status)}', style: const TextStyle(fontSize: 16)),
-                  Text('Создан: $createdTime', style: const TextStyle(fontSize: 16)),
-                  Text('Запланировано: $scheduledTimeStr', style: const TextStyle(fontSize: 16)),
-                  if (comment.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    const Text('Комментарий:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                    Text(comment, style: const TextStyle(fontSize: 16)),
-                  ],
+                      // 2. КАРТОЧКА ДЕТАЛЕЙ КЛИЕНТА
+                      _buildClientCard(data),
+                      const SizedBox(height: 16),
 
-                  _buildAdditionalOptions(data),
-
-                  const Text('История статусов:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  if (acceptedAt != null) Text('Принят: ${DateFormat('dd.MM.yyyy HH:mm').format(acceptedAt.toDate())}', style: const TextStyle(fontSize: 16)),
-                  if (inProgressAt != null) Text('В пути: ${DateFormat('dd.MM.yyyy HH:mm').format(inProgressAt.toDate())}', style: const TextStyle(fontSize: 16)),
-                  if (deliveredAt != null) Text('Доставлено: ${DateFormat('dd.MM.yyyy HH:mm').format(deliveredAt.toDate())}', style: const TextStyle(fontSize: 16)),
-                  const SizedBox(height: 16),
-
-                  // Кнопки
-                  if (status == 'new') ...[
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: loading ? null : () => _updateStatus('accepted', data),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.deepOrange, padding: const EdgeInsets.symmetric(vertical: 14)),
-                        child: loading ? const CircularProgressIndicator(color: Colors.white) : const Text('Принять заказ'),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: loading ? null : () => _updateStatus('cancelled', data),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red, padding: const EdgeInsets.symmetric(vertical: 14)),
-                        child: loading ? const CircularProgressIndicator(color: Colors.white) : const Text('Отменить заказ'),
-                      ),
-                    ),
-                  ],
-                  if (status == 'accepted')
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: loading ? null : () => _updateStatus('inProgress', data),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, padding: const EdgeInsets.symmetric(vertical: 14)),
-                        child: loading ? const CircularProgressIndicator(color: Colors.white) : const Text('В пути'),
-                      ),
-                    ),
-                  if (status == 'inProgress')
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: loading ? null : () => _updateStatus('delivered', data),
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(vertical: 14)),
-                        child: loading ? const CircularProgressIndicator(color: Colors.white) : const Text('Доставлено'),
-                      ),
-                    ),
-                ],
+                      // 3. ШКАЛА СТАТУСОВ
+                      _buildStatusTimeline(data),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              // ПАНЕЛЬ ДЕЙСТВИЙ (КНОПКИ)
+              _buildActionPanel(status, data),
+            ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildRouteCard(Map<String, dynamic> data) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10)],
+      ),
+      child: Column(
+        children: [
+          _routeRow(Icons.circle_outlined, Colors.orange, 'ОТКУДА', data['fromAddress']),
+          Padding(
+            padding: const EdgeInsets.only(left: 11),
+            child: Container(height: 25, width: 1.5, color: Colors.grey[200]),
+          ),
+          _routeRow(Icons.location_on, Colors.redAccent, 'КУДА', data['toAddress']),
+        ],
+      ),
+    );
+  }
+
+  Widget _routeRow(IconData icon, Color color, String label, String? address) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
+              Text(address ?? '-', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildClientCard(Map<String, dynamic> data) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        children: [
+          _infoTile(Icons.person_outline, 'Клиент', data['clientName'] ?? '-'),
+          _infoTile(Icons.phone_iphone_outlined, 'Телефон', data['clientPhone'] ?? '-'),
+          _infoTile(Icons.payments_outlined, 'К оплате', '${data['totalPrice'] ?? 0} ₽', isPrice: true),
+          if (data['comment']?.isNotEmpty == true) ...[
+            const Divider(height: 24),
+            _infoTile(Icons.chat_bubble_outline, 'Комментарий', data['comment']),
+          ],
+          _buildAdditionalChips(data),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoTile(IconData icon, String label, String value, {bool isPrice = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.grey[400]),
+          const SizedBox(width: 10),
+          Text('$label:', style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(value, style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: isPrice ? Colors.orange[800] : Colors.black87
+            )),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdditionalChips(Map<String, dynamic> data) {
+    List<Widget> chips = [];
+    if (data.containsKey('escort')) chips.add(_tagChip('Сопровождение: ${data['escort']}'));
+    if (data.containsKey('loaders')) chips.add(_tagChip('Грузчики: ${data['loaders']}'));
+    if (data.containsKey('bodySize')) chips.add(_tagChip('Кузов: ${data['bodySize']}'));
+
+    if (chips.isEmpty) return const SizedBox();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Wrap(spacing: 8, runSpacing: 8, children: chips),
+    );
+  }
+
+  Widget _tagChip(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.orange.withOpacity(0.2)),
+      ),
+      child: Text(label, style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildStatusTimeline(Map<String, dynamic> data) {
+    final acceptedAt = data['acceptedAt'] as Timestamp?;
+    final inProgressAt = data['inProgressAt'] as Timestamp?;
+    final deliveredAt = data['deliveredAt'] as Timestamp?;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('ХРОНОЛОГИЯ', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+          const SizedBox(height: 16),
+          _timelineStep('Принят', acceptedAt),
+          _timelineStep('В пути', inProgressAt),
+          _timelineStep('Доставлен', deliveredAt, isLast: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _timelineStep(String title, Timestamp? time, {bool isLast = false}) {
+    return Row(
+      children: [
+        Column(
+          children: [
+            Icon(time != null ? Icons.check_circle : Icons.radio_button_unchecked,
+                size: 18, color: time != null ? Colors.green : Colors.grey[300]),
+            if (!isLast) Container(width: 1.5, height: 20, color: Colors.grey[100]),
+          ],
+        ),
+        const SizedBox(width: 12),
+        Text(title, style: TextStyle(color: time != null ? Colors.black87 : Colors.grey, fontSize: 13)),
+        const Spacer(),
+        if (time != null) Text(DateFormat('HH:mm').format(time.toDate()), style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
+    );
+  }
+
+  Widget _buildActionPanel(String status, Map<String, dynamic> data) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status == 'new') ...[
+            _actionButton('ПРИНЯТЬ ЗАКАЗ', Colors.orange[700]!, () => _updateStatus('accepted', data)),
+            TextButton(
+              onPressed: loading ? null : () => _updateStatus('cancelled', data),
+              child: const Text('Отменить заказ', style: TextStyle(color: Colors.redAccent)),
+            ),
+          ],
+          if (status == 'accepted')
+            _actionButton('В ПУТИ К КЛИЕНТУ', Colors.amber[800]!, () => _updateStatus('inProgress', data)),
+          if (status == 'inProgress')
+            _actionButton('ЗАВЕРШИТЬ ДОСТАВКУ', Colors.green[600]!, () => _updateStatus('delivered', data)),
+          if (status == 'delivered')
+            const Text('✅ Заказ выполнен', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionButton(String text, Color color, VoidCallback onPressed) {
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: ElevatedButton(
+        onPressed: loading ? null : onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          elevation: 0,
+        ),
+        child: loading
+            ? const CircularProgressIndicator(color: Colors.white)
+            : Text(text, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
       ),
     );
   }

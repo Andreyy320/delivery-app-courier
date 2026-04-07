@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'active_detail.dart';      // обычные заказы
-import 'gorod_detail.dart';       // городские заказы
-import 'mejgorod_detail.dart';    // межгород
-import 'srok_detail.dart';        // срочные/express заказы
+// Твои импорты без изменений
+import 'active_detail.dart';
+import 'gorod_detail.dart';
+import 'mejgorod_detail.dart';
+import 'srok_detail.dart';
 
 class OrdersStatusScreen extends StatefulWidget {
   final String courierId;
@@ -21,7 +22,6 @@ class OrdersStatusScreen extends StatefulWidget {
 
 String getShopLabelById(String shopId) {
   if (shopId.isEmpty) return 'Заведение';
-
   const floareShops = ['mir_svetov', 'svetok_sentr', 'buket_md'];
   const restaurantShops = ['la_vida', 'nuvo', 'georgia', 'la_tokane'];
   const aptekas = ['viva_farm', 'sto_letnik', 'e_apteka'];
@@ -33,52 +33,39 @@ String getShopLabelById(String shopId) {
   if (aptekas.contains(shopId)) return 'Аптека';
   if (electronics.contains(shopId)) return 'Магазин электроники';
   if (groceryShops.contains(shopId)) return 'Продуктовый магазин';
-
   return 'Заведение';
 }
 
-Widget buildTypeBadge(String type) {
-  String label;
-  Color color;
+class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
 
-  switch (type) {
-    case 'normal':
-      label = 'Доставка';
-      color = Colors.orange;
-      break;
-    case 'express':
-    case 'delivery':
-      label = 'Срочная доставка';
-      color = Colors.red;
-      break;
-    case 'city':
-      label = 'Город';
-      color = Colors.blue;
-      break;
-    case 'mejCity':
-      label = 'Межгород';
-      color = Colors.green;
-      break;
-    default:
-      label = 'Доставка';
-      color = Colors.orange;
+  // Вынесенный и улучшенный виджет бейджа
+  Widget _buildTypeBadge(String type) {
+    String label;
+    Color color;
+
+    switch (type) {
+      case 'normal': label = 'ДОСТАВКА'; color = Colors.orange[800]!; break;
+      case 'express':
+      case 'delivery': label = 'СРОЧНО'; color = Colors.red[800]!; break;
+      case 'city': label = 'ГОРОД'; color = Colors.blue[800]!; break;
+      case 'mejCity': label = 'МЕЖГОРОД'; color = Colors.green[800]!; break;
+      default: label = 'ЗАКАЗ'; color = Colors.grey[700]!;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+      ),
+    );
   }
 
-  return Container(
-    margin: const EdgeInsets.only(top: 6),
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-    decoration: BoxDecoration(
-      color: color,
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: Text(
-      label,
-      style: const TextStyle(color: Colors.white, fontSize: 12),
-    ),
-  );
-}
-
-class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
   @override
   Widget build(BuildContext context) {
     final ordersQuery = FirebaseFirestore.instance
@@ -89,114 +76,113 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
         .orderBy('actionAt', descending: true);
 
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: const Text('Мои текущие заказы'),
-        backgroundColor: Colors.deepOrange,
+        title: const Text('Текущие заказы', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
+        elevation: 0,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(color: Colors.grey[200], height: 1),
+        ),
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: ordersQuery.snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки заказов'));
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: CircularProgressIndicator(color: Colors.deepOrange));
           }
 
           final orders = snapshot.data!.docs;
-          if (orders.isEmpty) return const Center(child: Text('Нет текущих заказов'));
+          if (orders.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.assignment_outlined, size: 80, color: Colors.grey[300]),
+                  const SizedBox(height: 16),
+                  const Text('Активных заказов нет', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                ],
+              ),
+            );
+          }
 
-          return ListView.builder(
+          return ListView.separated(
+            padding: const EdgeInsets.all(16),
             itemCount: orders.length,
+            separatorBuilder: (context, index) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
               final doc = orders[index];
               final data = doc.data() as Map<String, dynamic>;
-              final orderRef = doc.reference;
-              final orderId = doc.id;
 
-              // Тип заказа
               final type = data['type'] ?? (data.containsKey('fromAddress') ? 'mejCity' : 'normal');
-
-              // Цена: берём все возможные поля
               final price = data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0;
+              final status = data['status'] ?? '';
 
-              // Клиент
-              final clientName = data['clientName'] ?? 'Без имени';
-              final clientPhone = data['clientPhone'] ?? '-';
+              return Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                  ],
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(22),
+                    onTap: () => _navigateToDetail(context, type, doc),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          // ВЕРХ: ID и Статус
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('ЗАКАЗ №${doc.id.substring(0, 6).toUpperCase()}',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[600])),
+                              _buildStatusIndicator(status),
+                            ],
+                          ),
+                          const Divider(height: 24),
 
-              // Заведение показываем только для обычных заказов
-              String shopText = '';
-              if (type == 'normal') {
-                final restaurantName = data['restaurantName'] ?? '';
-                final shopId = data['shopId'] ?? '';
-                final shopLabel = getShopLabelById(shopId);
-                shopText = '$shopLabel: $restaurantName';
-              }
-
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.all(16),
-                  title: Text(
-                    'Заказ №${orderId.substring(0, 6)}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                          // СЕРЕДИНА: Клиент и Магазин
+                          Row(
+                            children: [
+                              _buildLeadingIcon(type),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(data['clientName'] ?? 'Без имени',
+                                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                                    if (type == 'normal')
+                                      Text('${getShopLabelById(data['shopId'] ?? '')}: ${data['restaurantName'] ?? ''}',
+                                          style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                                    const SizedBox(height: 8),
+                                    _buildTypeBadge(type),
+                                  ],
+                                ),
+                              ),
+                              // Цена
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text('$price ₽', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                                  const Text('к оплате', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 4),
-                      Text('Клиент: $clientName'),
-                      Text('Телефон: $clientPhone'),
-                      if (shopText.isNotEmpty) Text(shopText),
-                      Text('Сумма: $price ₽'), // теперь всегда корректно
-                      buildTypeBadge(type),
-                    ],
-                  ),
-                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                  onTap: () {
-                    Widget screen;
-                    switch (type) {
-                      case 'normal':
-                        screen = CourierOrderDetailScreen(
-                          orderRef: orderRef,
-                          courierId: widget.courierId,
-                          courierPhone: widget.courierPhone,
-                        );
-                        break;
-                      case 'city':
-                        screen = GorodOrderDetailScreen(
-                          orderRef: orderRef,
-                          courierId: widget.courierId,
-                          courierPhone: widget.courierPhone,
-                        );
-                        break;
-                      case 'delivery':
-                      case 'express':
-                        screen = SrokOrderDetailScreen(
-                          orderRef: orderRef,
-                          courierId: widget.courierId,
-                          courierPhone: widget.courierPhone,
-                        );
-                        break;
-                      case 'mejCity':
-                        screen = IntercityOrderDetailScreen(
-                          orderRef: orderRef,
-                          courierId: widget.courierId,
-                          courierPhone: widget.courierPhone,
-                        );
-                        break;
-                      default:
-                        screen = CourierOrderDetailScreen(
-                          orderRef: orderRef,
-                          courierId: widget.courierId,
-                          courierPhone: widget.courierPhone,
-                        );
-                    }
-
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => screen),
-                    );
-                  },
                 ),
               );
             },
@@ -204,5 +190,68 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
         },
       ),
     );
+  }
+
+  Widget _buildStatusIndicator(String status) {
+    bool isInProgress = status == 'inProgress';
+    return Row(
+      children: [
+        Container(
+          width: 8, height: 8,
+          decoration: BoxDecoration(
+            color: isInProgress ? Colors.blue : Colors.orange,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          isInProgress ? 'В ПУТИ' : 'ПРИНЯТ',
+          style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: isInProgress ? Colors.blue[800] : Colors.orange[800]
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLeadingIcon(String type) {
+    IconData icon;
+    Color color;
+    switch (type) {
+      case 'city': icon = Icons.location_city; color = Colors.blue; break;
+      case 'mejCity': icon = Icons.map; color = Colors.teal; break;
+      case 'express':
+      case 'delivery': icon = Icons.flash_on; color = Colors.red; break;
+      default: icon = Icons.shopping_bag; color = Colors.orange;
+    }
+    return Container(
+      width: 44, height: 44,
+      decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+      child: Icon(icon, color: color, size: 22),
+    );
+  }
+
+  void _navigateToDetail(BuildContext context, String type, DocumentSnapshot doc) {
+    Widget screen;
+    switch (type) {
+      case 'normal':
+        screen = CourierOrderDetailScreen(orderRef: doc.reference, courierId: widget.courierId, courierPhone: widget.courierPhone);
+        break;
+      case 'city':
+        screen = GorodOrderDetailScreen(orderRef: doc.reference, courierId: widget.courierId, courierPhone: widget.courierPhone);
+        break;
+      case 'delivery':
+      case 'express':
+        screen = SrokOrderDetailScreen(orderRef: doc.reference, courierId: widget.courierId, courierPhone: widget.courierPhone);
+        break;
+      case 'mejCity':
+        screen = IntercityOrderDetailScreen(orderRef: doc.reference, courierId: widget.courierId, courierPhone: widget.courierPhone);
+        break;
+      default:
+        screen = CourierOrderDetailScreen(orderRef: doc.reference, courierId: widget.courierId, courierPhone: widget.courierPhone);
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 }
