@@ -71,7 +71,8 @@ class _IntercityOrderDetailScreenState extends State<IntercityOrderDetailScreen>
             .set({
           ...data,
           ...updateData,
-          'type': 'intercity',
+          'type': 'mejCity', // 🔹 Исправили с 'intercity' на 'mejCity' для совместимости
+          'total': data['totalPrice'], // 🔹 Дублируем цену в поле 'total', чтобы везде отображалось
           'actionAt': actionTime,
         }, SetOptions(merge: true));
       }

@@ -213,39 +213,82 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
     );
   }
 
+  // ... (начало кода без изменений)
+
   Widget _buildItemsCard(Map<String, dynamic> data) {
+    // Проверяем наличие товаров (для обычных) или описание (для межгорода)
     final items = data['items'] as List<dynamic>? ?? [];
+
+    // Пытаемся достать цену из всех возможных полей
+    final price = data['total'] ?? data['totalPrice'] ?? data['totalCost'] ?? 0;
+
+    // Проверяем, межгород это или нет (по наличию адресов)
+    final isIntercity = data.containsKey('fromAddress') || data['type'] == 'mejCity';
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('СОСТАВ ЗАКАЗА', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+          Text(isIntercity ? 'ДЕТАЛИ ПЕРЕВОЗКИ' : 'СОСТАВ ЗАКАЗА',
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
           const SizedBox(height: 12),
-          ...items.map((item) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                const Icon(Icons.fastfood_outlined, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Expanded(child: Text('${item['name']}')),
-                Text('× ${item['quantity']}', style: const TextStyle(fontWeight: FontWeight.bold)),
-              ],
-            ),
-          )),
+
+          if (isIntercity) ...[
+            _infoRow(Icons.location_on_outlined, 'Откуда', data['fromAddress'] ?? '-'),
+            _infoRow(Icons.flag_outlined, 'Куда', data['toAddress'] ?? '-'),
+            if (data['description'] != null)
+              _infoRow(Icons.description_outlined, 'Груз', data['description']),
+          ] else ...[
+            ...items.map((item) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.fastfood_outlined, size: 16, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('${item['name']}')),
+                  Text('× ${item['quantity']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+            )),
+          ],
+
           const Divider(height: 30),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text('К оплате:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-              Text('${data['total']} ₽', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
+              // Выводим найденную цену
+              Text('$price ₽', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
             ],
           ),
         ],
       ),
     );
   }
+
+// Обновим также бейдж в деталях, чтобы он не всегда писал "НОВЫЙ/ПРИНЯТ",
+// а учитывал тип, если нужно
+  Widget _statusBadge(String status) {
+    String label;
+    Color color;
+
+    switch (status) {
+      case 'new': label = 'НОВЫЙ'; color = Colors.blue; break;
+      case 'accepted': label = 'ПРИНЯТ'; color = Colors.orange; break;
+      case 'inProgress': label = 'В ПУТИ'; color = Colors.indigo; break;
+      case 'delivered': label = 'ДОСТАВЛЕН'; color = Colors.green; break;
+      default: label = status.toUpperCase(); color = Colors.grey;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+      child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+    );
+  }
+// ...
 
   Widget _buildTimelineCard(Map<String, dynamic> data) {
     return Container(
@@ -315,25 +358,7 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
   }
 
   // Обновленный бейдж на русском
-  Widget _statusBadge(String status) {
-    String label;
-    Color color;
 
-    switch (status) {
-      case 'new': label = 'НОВЫЙ'; color = Colors.blue; break;
-      case 'accepted': label = 'ПРИНЯТ'; color = Colors.orange; break;
-      case 'inProgress': label = 'В ПУТИ'; color = Colors.indigo; break;
-      case 'delivered': label = 'ДОСТАВЛЕН'; color = Colors.green; break;
-      case 'cancelled': label = 'ОТМЕНЁН'; color = Colors.red; break;
-      default: label = status.toUpperCase(); color = Colors.grey;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-      child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
-    );
-  }
 
   Widget _timeStep(String title, Timestamp? time, {bool isLast = false}) {
     return Row(

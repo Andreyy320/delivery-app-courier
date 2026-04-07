@@ -117,7 +117,7 @@
         builder: (context, snapshot) {
           if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки'));
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return _buildEmptyState('Новых заказов из заведений пока нет');
+            return _buildEmptyState('Новых заказов пока нет');
           }
 
           final orders = snapshot.data!.docs;

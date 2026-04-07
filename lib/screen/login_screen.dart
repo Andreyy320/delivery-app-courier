@@ -51,7 +51,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (query.docs.isEmpty) {
         setState(() {
-          errorText = 'Курьер не найден или не активен.\nПроверьте данные в Firebase.';
+          errorText = 'Курьер не найден или не активен.';
           loading = false;
         });
         return;
