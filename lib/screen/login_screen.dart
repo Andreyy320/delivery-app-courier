@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'home_screen.dart';
 
@@ -9,28 +10,42 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
   bool loading = false;
   String? errorText;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
-    // Устанавливаем префикс сразу при загрузке
     phoneController.text = '+373 ';
+
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    _fadeAnimation = CurvedAnimation(parent: _animationController, curve: Curves.easeOut);
+    _animationController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    phoneController.dispose();
+    passwordController.dispose();
+    super.dispose();
   }
 
   Future<void> _login() async {
-    // 1. Очищаем номер от пробелов для поиска в базе (будет +37377xxxxxx)
     final phone = phoneController.text.replaceAll(' ', '');
     final password = passwordController.text.trim();
 
-    // Проверка на пустые поля (префикс +373 занимает 4 символа)
-    if (phone.length <= 4 || password.isEmpty) {
-      setState(() => errorText = 'Введите полный номер и пароль');
+    if (phone.length < 12 || password.isEmpty) {
+      setState(() => errorText = 'Введите 8 цифр номера и пароль');
       return;
     }
 
@@ -40,18 +55,18 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      // 2. Ищем курьера в коллекции 'couriers'
+      // ИЩЕМ В БАЗЕ СОВПАДЕНИЕ ПО ЛОГИНУ И ПАРОЛЮ (ОБЫЧНЫЙ ТЕКСТ)
       final query = await FirebaseFirestore.instance
           .collection('couriers')
           .where('phone', isEqualTo: phone)
-          .where('password', isEqualTo: password)
+          .where('password', isEqualTo: password) // Сравниваем текст напрямую
           .where('active', isEqualTo: true)
           .limit(1)
           .get();
 
       if (query.docs.isEmpty) {
         setState(() {
-          errorText = 'Курьер не найден или не активен.';
+          errorText = 'Аккаунт не найден или деактивирован';
           loading = false;
         });
         return;
@@ -61,7 +76,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
-      // 3. Переход в главное приложение
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
@@ -74,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       setState(() {
-        errorText = 'Ошибка подключения: $e';
+        errorText = 'Сбой подключения к серверу';
         loading = false;
       });
     }
@@ -83,164 +97,203 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100],
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Иконка курьера
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.deepOrange.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.delivery_dining_rounded,
-                    color: Colors.deepOrange,
-                    size: 80,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Вход для курьера',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Доставка заказов',
-                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                ),
-                const SizedBox(height: 40),
-
-                // Карточка с формой
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 15,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
-                  ),
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          Positioned(
+            top: -50,
+            left: -50,
+            child: CircleAvatar(radius: 100, backgroundColor: const Color(0xFFF8F9FB)),
+          ),
+          SafeArea(
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: Center(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
                   child: Column(
                     children: [
-                      _buildTextField(
-                        controller: phoneController,
-                        label: 'Номер телефона',
-                        icon: Icons.phone_android_rounded,
-                        keyboardType: TextInputType.phone,
+                      Container(
+                        height: 90,
+                        width: 90,
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.15),
+                              blurRadius: 25,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                            Icons.delivery_dining_rounded,
+                            size: 55,
+                            color: Colors.white
+                        ),
                       ),
-                      const SizedBox(height: 20),
-                      _buildTextField(
+                      const SizedBox(height: 32),
+                      const Text(
+                        'COURIER',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2,
+                          color: Colors.black,
+                        ),
+                      ),
+                      const Text(
+                        'MANAGEMENT SYSTEM',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.black26,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 50),
+                      _buildLabel("ТЕЛЕФОН КУРЬЕРА"),
+                      _buildField(
+                        controller: phoneController,
+                        icon: Icons.phone_android_rounded,
+                        hint: "77X XX XXX",
+                        isPhone: true,
+                        onChanged: (value) {
+                          if (!value.startsWith('+373 ')) {
+                            phoneController.text = '+373 ';
+                            phoneController.selection = TextSelection.fromPosition(
+                              TextPosition(offset: phoneController.text.length),
+                            );
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      _buildLabel("ПАРОЛЬ ДОСТУПА"),
+                      _buildField(
                         controller: passwordController,
-                        label: 'Пароль',
-                        icon: Icons.lock_outline_rounded,
+                        icon: Icons.lock_open_rounded,
+                        hint: "••••••••",
                         isPassword: true,
                       ),
-                    ],
-                  ),
-                ),
-
-                if (errorText != null) ...[
-                  const SizedBox(height: 20),
-                  Text(
-                    errorText!,
-                    style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w500),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-
-                const SizedBox(height: 40),
-
-                // Кнопка входа
-                Container(
-                  width: double.infinity,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.deepOrange.withOpacity(0.3),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+                      if (errorText != null) ...[
+                        const SizedBox(height: 20),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            errorText!,
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 40),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 65,
+                        child: ElevatedButton(
+                          onPressed: loading ? null : _login,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.black,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(22),
+                            ),
+                          ),
+                          child: loading
+                              ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          )
+                              : const Text(
+                            'ВОЙТИ В СИСТЕМУ',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      const Text(
+                        "Версия терминала 1.0.4",
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: Colors.black12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
-                  child: ElevatedButton(
-                    onPressed: loading ? null : _login,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepOrange,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    child: loading
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text(
-                      'ВОЙТИ В СИСТЕМУ',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
                 ),
-              ],
+              ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLabel(String text) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 8, bottom: 8),
+        child: Text(
+          text,
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            color: Colors.black26,
+            letterSpacing: 1.2,
           ),
         ),
       ),
     );
   }
 
-  Widget _buildTextField({
+  Widget _buildField({
     required TextEditingController controller,
-    required String label,
     required IconData icon,
+    required String hint,
     bool isPassword = false,
-    TextInputType keyboardType = TextInputType.text,
+    bool isPhone = false,
+    Function(String)? onChanged,
   }) {
-    return TextField(
-      controller: controller,
-      obscureText: isPassword,
-      keyboardType: keyboardType,
-      onChanged: (value) {
-        // Не даем удалить +373
-        if (!isPassword && !value.startsWith('+373 ')) {
-          controller.text = '+373 ';
-          controller.selection = TextSelection.fromPosition(
-            TextPosition(offset: controller.text.length),
-          );
-        }
-      },
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon, color: Colors.deepOrange),
-        hintText: isPassword ? null : '77X XX XXX',
-        filled: true,
-        fillColor: Colors.grey[50],
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey[200]!),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.deepOrange, width: 1.5),
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FB),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: TextField(
+        controller: controller,
+        obscureText: isPassword,
+        onChanged: onChanged,
+        keyboardType: isPhone ? TextInputType.number : TextInputType.text,
+        inputFormatters: isPhone ? [
+          FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ]')),
+          LengthLimitingTextInputFormatter(13),
+        ] : [],
+        cursorColor: Colors.black,
+        style: const TextStyle(fontWeight: FontWeight.bold),
+        decoration: InputDecoration(
+          counterText: "",
+          hintText: hint,
+          hintStyle: const TextStyle(color: Colors.black12, fontWeight: FontWeight.normal),
+          prefixIcon: Icon(icon, color: Colors.black45, size: 20),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+          contentPadding: const EdgeInsets.symmetric(vertical: 22),
         ),
       ),
     );

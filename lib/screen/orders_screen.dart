@@ -46,33 +46,39 @@
 
     Future<void> _takeOrder(DocumentReference orderRef) async {
       try {
-        final snap = await orderRef.get();
-        if (!snap.exists) throw Exception('Заказ не найден');
-        final data = snap.data() as Map<String, dynamic>;
+        await FirebaseFirestore.instance.runTransaction((transaction) async {
+          DocumentSnapshot snap = await transaction.get(orderRef);
+          if (!snap.exists) throw Exception('Заказ не найден');
 
-        if (data['status'] != 'new') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Этот заказ уже взят другим курьером')),
-          );
-          return;
-        }
+          final data = snap.data() as Map<String, dynamic>;
+          final status = data['status'] ?? '';
 
-        await orderRef.update({
-          'status': 'accepted',
-          'courierId': widget.courierId,
-          'courierPhone': widget.courierPhone,
-          'acceptedAt': FieldValue.serverTimestamp(),
+          // Разрешаем брать только если статус 'new' или 'ready'
+          if (status != 'new' && status != 'ready') {
+            throw Exception('Этот заказ уже взял другой курьер');
+          }
+
+          transaction.update(orderRef, {
+            'status': 'accepted',
+            'courierId': widget.courierId,
+            'courierPhone': widget.courierPhone,
+            'acceptedAt': FieldValue.serverTimestamp(),
+          });
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Заказ принят')),
-        );
-
-        setState(() {}); // обновляем экран
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Заказ принят!'), backgroundColor: Colors.green),
+          );
+          // Возвращаемся на список после принятия
+          Navigator.pop(context);
+        }
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка: $e')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.toString().replaceAll('Exception: ', '')), backgroundColor: Colors.red),
+          );
+        }
       }
     }
 
@@ -106,10 +112,13 @@
 
 
     // ===================== Доставка =====================
+    // ===================== Доставка (Обновлено с таймером готовности) =====================
     Widget _buildDeliveryOrders() {
+      // 1. Формируем запрос: тянем заказы, которые готовятся, готовы или уже ПРИНЯТЫ.
+      // ВАЖНО: Если до этого accepted не было в whereIn, Firebase может попросить создать индекс (ссылка будет в логах).
       final ordersQuery = FirebaseFirestore.instance
           .collectionGroup('orders')
-          .where('status', isEqualTo: 'ready') // Показываем только готовые к выдаче
+          .where('status', whereIn: ['ready', 'preparing', 'accepted'])
           .orderBy('createdAt', descending: true);
 
       return StreamBuilder<QuerySnapshot>(
@@ -120,7 +129,27 @@
             return _buildEmptyState('Новых заказов пока нет');
           }
 
-          final orders = snapshot.data!.docs;
+          // 2. ФИЛЬТРАЦИЯ (Invisible Personalization):
+          // Мы убираем чужие заказы прямо в коде, чтобы курьеры не видели работу друг друга.
+          final orders = snapshot.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final String? orderCourierId = data['courierId'];
+            final List<dynamic> rejectedBy = data['rejectedBy'] ?? [];
+
+            // Проверка 1: Ты не нажимал "Скрыть" на этот заказ
+            bool isNotRejected = !rejectedBy.contains(widget.courierId);
+
+            // Проверка 2: У заказа нет владельца (пусто или null)
+            bool isAvailable = orderCourierId == null || orderCourierId.isEmpty;
+
+            // Проверка 3: Владелец заказа — ТЫ
+            bool isMine = orderCourierId == widget.courierId;
+
+            // Показываем если (не скрыт) И (свободен ИЛИ мой)
+            return isNotRejected && (isAvailable || isMine);
+          }).toList();
+
+          if (orders.isEmpty) return _buildEmptyState('Новых заказов пока нет');
 
           return ListView.builder(
             padding: const EdgeInsets.symmetric(vertical: 10),
@@ -128,9 +157,15 @@
             itemBuilder: (context, index) {
               final doc = orders[index];
               final data = doc.data() as Map<String, dynamic>;
+
+              final String status = data['status'] ?? 'ready';
+              final String? orderCourierId = data['courierId'];
+              final bool isMyOrder = orderCourierId == widget.courierId;
+
               final payment = data['paymentMethod'] ?? '-';
               final createdAt = data['createdAt'] as Timestamp?;
               final time = createdAt != null ? DateFormat('HH:mm').format(createdAt.toDate()) : '';
+              final estimatedReadyTime = data['estimatedReadyTime'] as Timestamp?;
 
               final userId = data['userId'] ?? '';
               final shopId = data['shopId'] ?? '';
@@ -146,9 +181,11 @@
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(20),
+                      // Если заказ мой — добавим легкую рамку для удобства
+                      border: isMyOrder ? Border.all(color: Colors.deepOrange.withOpacity(0.5), width: 1.5) : null,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.04),
+                          color: isMyOrder ? Colors.deepOrange.withOpacity(0.05) : Colors.black.withOpacity(0.04),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
                         ),
@@ -175,7 +212,6 @@
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Верхняя строка: Тип заведения и время
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
@@ -195,71 +231,54 @@
                                       ),
                                     ),
                                   ),
-                                  Row(
-                                    children: [
-                                      Icon(Icons.access_time, size: 14, color: Colors.grey[400]),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        time,
-                                        style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                                      ),
-                                    ],
-                                  ),
+                                  // Динамический статус
+                                  _buildStatusBadge(status, estimatedReadyTime, time),
                                 ],
                               ),
                               const SizedBox(height: 14),
-
-                              // Название ресторана/магазина
-                              Text(
-                                restaurantName,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black87,
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      restaurantName,
+                                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                                    ),
+                                  ),
+                                  if (isMyOrder)
+                                    const Icon(Icons.stars, color: Colors.deepOrange, size: 20),
+                                ],
                               ),
                               const SizedBox(height: 4),
-
-                              // Информация о клиенте
                               Row(
                                 children: [
                                   Icon(Icons.person_pin_circle_outlined, size: 16, color: Colors.grey[600]),
                                   const SizedBox(width: 6),
-                                  Text(
-                                    'Клиент: $clientName',
-                                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
-                                  ),
+                                  Text('Клиент: $clientName', style: TextStyle(color: Colors.grey[700], fontSize: 14)),
                                 ],
                               ),
-
-                              const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 12),
-                                child: Divider(height: 1),
-                              ),
-
-                              // Нижняя строка: Оплата и кнопка перехода
+                              const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider(height: 1)),
                               Row(
                                 children: [
                                   Icon(Icons.payments_outlined, size: 18, color: Colors.green[600]),
                                   const SizedBox(width: 8),
                                   Text(
                                     payment,
-                                    style: TextStyle(
-                                      color: Colors.green[700],
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14,
-                                    ),
+                                    style: TextStyle(color: Colors.green[700], fontWeight: FontWeight.w600, fontSize: 14),
                                   ),
                                   const Spacer(),
-                                  const Text(
-                                    'Детали',
+                                  Text(
+                                    _getActionText(status, isMyOrder),
                                     style: TextStyle(
-                                      color: Colors.deepOrange,
+                                      color: _getStatusColor(status),
                                       fontWeight: FontWeight.bold,
                                       fontSize: 13,
                                     ),
                                   ),
-                                  const Icon(Icons.chevron_right_rounded, color: Colors.deepOrange, size: 20),
+                                  Icon(
+                                      Icons.chevron_right_rounded,
+                                      color: _getStatusColor(status),
+                                      size: 20
+                                  ),
                                 ],
                               ),
                             ],
@@ -274,6 +293,62 @@
           );
         },
       );
+    }
+
+// Вспомогательный виджет для статусов
+    Widget _buildStatusBadge(String status, Timestamp? estimatedTime, String createTime) {
+      if (status == 'preparing' && estimatedTime != null) {
+        return _badge(
+          color: Colors.blue,
+          icon: Icons.timer_outlined,
+          text: 'Будет в ${DateFormat('HH:mm').format(estimatedTime.toDate())}',
+        );
+      } else if (status == 'ready') {
+        return _badge(color: Colors.green, icon: Icons.check_circle_outline, text: 'ГОТОВ');
+      } else if (status == 'accepted') {
+        return _badge(color: Colors.deepOrange, icon: Icons.assignment_turned_in_outlined, text: 'ВЫ ВЗЯЛИ');
+      }
+      return Row(
+        children: [
+          Icon(Icons.access_time, size: 14, color: Colors.grey[400]),
+          const SizedBox(width: 4),
+          Text(createTime, style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+        ],
+      );
+    }
+
+    Widget _badge({required Color color, required IconData icon, required String text}) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+            Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      );
+    }
+
+    String _getActionText(String status, bool isMine) {
+      if (isMine) {
+        if (status == 'preparing') return 'Ждите готовности';
+        if (status == 'ready') return 'Можно забирать';
+        return 'В работе';
+      }
+      if (status == 'preparing') return 'Готовится';
+      if (status == 'ready') return 'Забрать';
+      return 'Детали';
+    }
+
+    Color _getStatusColor(String status) {
+      if (status == 'preparing') return Colors.blue;
+      if (status == 'ready') return Colors.green;
+      return Colors.deepOrange;
     }
 
     Widget _buildUrgentOrders() {
@@ -666,6 +741,7 @@
 
     // ===================== Межгород =====================
     Widget _buildMejCityOrders() {
+      // Используем collectionGroup только для НОВЫХ заказов (которые еще никто не взял)
       final mejCityQuery = FirebaseFirestore.instance
           .collectionGroup('mejCityOrders')
           .where('status', isEqualTo: 'new')
@@ -674,7 +750,11 @@
       return StreamBuilder<QuerySnapshot>(
         stream: mejCityQuery.snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки'));
+          if (snapshot.hasError) {
+            debugPrint("Ошибка MejCity: ${snapshot.error}");
+            return const Center(child: Text('Ошибка загрузки'));
+          }
+
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return _buildEmptyState('Межгородских заказов пока нет');
           }
@@ -688,22 +768,24 @@
               final doc = orders[index];
               final data = doc.data() as Map<String, dynamic>;
 
+              // Вытаскиваем данные с проверкой на null
               final createdAt = data['createdAt'] as Timestamp?;
-              final time = createdAt != null ? DateFormat('HH:mm').format(createdAt.toDate()) : '';
+              final time = createdAt != null ? DateFormat('HH:mm').format(createdAt.toDate()) : '--:--';
 
               final scheduledTime = data['scheduledTime'] as Timestamp?;
               final scheduledTimeStr = scheduledTime != null
                   ? DateFormat('dd MMM, HH:mm').format(scheduledTime.toDate())
-                  : '—';
+                  : 'Не указано';
 
-              final totalCost = data['totalPrice'] ?? data['totalCost'] ?? '-';
+              // Исправляем путаницу с ценой (MDL/₽)
+              final price = data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? '0';
               final userId = data['userId'] ?? '';
-              final clientPhone = data['clientPhone'] ?? '-';
+              final clientPhone = data['clientPhone'] ?? 'Нет телефона';
 
               return FutureBuilder<String>(
                 future: _getClientName(data, userId),
                 builder: (context, nameSnapshot) {
-                  final clientName = nameSnapshot.data ?? '...';
+                  final clientName = nameSnapshot.data ?? 'Загрузка...';
 
                   return Container(
                     margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -711,11 +793,7 @@
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.04),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
+                        BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
                       ],
                     ),
                     child: Material(
@@ -723,6 +801,9 @@
                       child: InkWell(
                         borderRadius: BorderRadius.circular(20),
                         onTap: () {
+                          // ВАЖНО: передаем именно doc.reference, полученный из collectionGroup
+                          debugPrint("Переход в заказ: ${doc.reference.path}");
+
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -739,126 +820,40 @@
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Шапка: Номер и Метка "Межгород"
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
                                     'ЗАКАЗ №${doc.id.substring(0, 6).toUpperCase()}',
-                                    style: TextStyle(
-                                      color: Colors.grey[500],
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11,
-                                      letterSpacing: 0.8,
-                                    ),
+                                    style: TextStyle(color: Colors.grey[500], fontWeight: FontWeight.bold, fontSize: 11),
                                   ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.indigo.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(color: Colors.indigo.withOpacity(0.3)),
-                                    ),
-                                    child: const Text(
-                                      'МЕЖГОРОД',
-                                      style: TextStyle(
-                                        color: Colors.indigo,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
+                                  _typeLabel('МЕЖГОРОД', Colors.indigo),
                                 ],
                               ),
                               const SizedBox(height: 16),
-
-                              // Основная инфа: Клиент и Большая Цена
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text(
-                                          clientName,
-                                          style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Row(
-                                          children: [
-                                            const Icon(Icons.phone_iphone, size: 14, color: Colors.grey),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              clientPhone,
-                                              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                                            ),
-                                          ],
-                                        ),
+                                        Text(clientName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                                        Text(clientPhone, style: TextStyle(color: Colors.grey[600], fontSize: 13)),
                                       ],
                                     ),
                                   ),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text(
-                                        '$totalCost ₽',
-                                        style: const TextStyle(
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.w900,
-                                          color: Colors.indigo,
-                                        ),
-                                      ),
-                                      const Text(
-                                        'тариф',
-                                        style: TextStyle(color: Colors.grey, fontSize: 11),
-                                      ),
-                                    ],
-                                  ),
+                                  Text('$price MDL', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.indigo)),
                                 ],
                               ),
-
-                              const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 12),
-                                child: Divider(height: 1),
-                              ),
-
-                              // Нижняя строка: Планируемое время
+                              const Divider(height: 24),
                               Row(
                                 children: [
                                   const Icon(Icons.departure_board_rounded, size: 18, color: Colors.indigo),
                                   const SizedBox(width: 8),
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Выезд запланирован:',
-                                        style: TextStyle(color: Colors.grey, fontSize: 11),
-                                      ),
-                                      Text(
-                                        scheduledTimeStr,
-                                        style: const TextStyle(
-                                          color: Colors.black87,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                  Text('Выезд: $scheduledTimeStr', style: const TextStyle(fontWeight: FontWeight.bold)),
                                   const Spacer(),
-                                  Container(
-                                    padding: const EdgeInsets.all(6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey[100],
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
-                                  ),
+                                  const Icon(Icons.chevron_right_rounded, color: Colors.grey),
                                 ],
                               ),
                             ],
@@ -875,7 +870,18 @@
       );
     }
 
-
+// Маленький хелпер для красоты
+    Widget _typeLabel(String label, Color color) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+      );
+    }
 
 
     @override

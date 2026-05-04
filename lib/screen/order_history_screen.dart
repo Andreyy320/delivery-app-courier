@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-// Твои импорты без изменений
+
+// Твои импорты деталей
 import 'active_detail.dart';
 import 'gorod_detail.dart';
 import 'mejgorod_detail.dart';
@@ -12,32 +13,18 @@ class OrderHistoryScreen extends StatelessWidget {
 
   const OrderHistoryScreen({super.key, required this.courierId});
 
-  // Улучшенный бейдж с типом доставки
+  // Бейдж типа заказа
   Widget _buildTypeBadge(String type) {
     String label;
     Color color;
 
     switch (type) {
-      case 'normal':
-        label = 'ДОСТАВКА';
-        color = Colors.orange[700]!;
-        break;
+      case 'normal': label = 'ДОСТАВКА'; color = Colors.orange[700]!; break;
       case 'express':
-      case 'delivery':
-        label = 'СРОЧНО';
-        color = Colors.red[800]!;
-        break;
-      case 'city':
-        label = 'ГОРОД';
-        color = Colors.blue[700]!;
-        break;
-      case 'mejCity':
-        label = 'МЕЖГОРОД';
-        color = Colors.teal[700]!;
-        break;
-      default:
-        label = 'ЗАКАЗ';
-        color = Colors.grey[700]!;
+      case 'delivery': label = 'СРОЧНО'; color = Colors.red[800]!; break;
+      case 'city': label = 'ГОРОД'; color = Colors.blue[700]!; break;
+      case 'mejCity': label = 'МЕЖГОРОД'; color = Colors.teal[700]!; break;
+      default: label = 'ЗАКАЗ'; color = Colors.grey[700]!;
     }
 
     return Container(
@@ -56,29 +43,30 @@ class OrderHistoryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 1. ФИЛЬТР: Берем только те, где статус 'delivered'
+    // 2. СОРТИРОВКА: Самые свежие сверху
     final historyQuery = FirebaseFirestore.instance
         .collection('couriers')
         .doc(courierId)
         .collection('history')
+        .where('status', isEqualTo: 'delivered')
         .orderBy('updatedAt', descending: true);
 
     return Scaffold(
-      backgroundColor: Colors.grey[100], // Светлый фон для контраста карточек
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
         title: const Text('История заказов', style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
         elevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(color: Colors.grey[200], height: 1),
-        ),
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: historyQuery.snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки'));
+          if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки. Проверьте индексы в консоли.'));
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return Center(
               child: Column(
@@ -86,7 +74,7 @@ class OrderHistoryScreen extends StatelessWidget {
                 children: [
                   Icon(Icons.history_outlined, size: 64, color: Colors.grey[300]),
                   const SizedBox(height: 16),
-                  const Text('История пока пуста', style: TextStyle(color: Colors.grey)),
+                  const Text('Завершенных заказов нет', style: TextStyle(color: Colors.grey)),
                 ],
               ),
             );
@@ -106,7 +94,6 @@ class OrderHistoryScreen extends StatelessWidget {
               final clientName = data['clientName'] ?? 'Без имени';
               final price = data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0;
 
-              // Форматируем дату обновления (завершения)
               final updatedAt = data['updatedAt'] as Timestamp?;
               final dateStr = updatedAt != null
                   ? DateFormat('dd MMM, HH:mm').format(updatedAt.toDate())
@@ -117,27 +104,20 @@ class OrderHistoryScreen extends StatelessWidget {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
+                    BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 4)),
                   ],
                 ),
                 child: Material(
                   color: Colors.transparent,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(20),
-                    onTap: () => _navigateToDetail(context, type, doc, courierId),
+                    onTap: () => _navigateToDetail(context, type, doc),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Row(
                         children: [
-                          // Иконка в зависимости от типа
                           _buildLeadingIcon(type),
                           const SizedBox(width: 16),
-
-                          // Основная инфо
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -149,7 +129,7 @@ class OrderHistoryScreen extends StatelessWidget {
                                 const SizedBox(height: 4),
                                 Text(
                                   clientName,
-                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -158,22 +138,14 @@ class OrderHistoryScreen extends StatelessWidget {
                               ],
                             ),
                           ),
-
-                          // Правая часть: Цена и Дата
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                '$price ₽',
-                                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Colors.black87),
-                              ),
+                              Text('$price MDL', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
                               const SizedBox(height: 4),
-                              Text(
-                                dateStr,
-                                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                              ),
+                              Text(dateStr, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
                               const SizedBox(height: 8),
-                              Icon(Icons.chevron_right, color: Colors.grey[300], size: 20),
+                              const Icon(Icons.check_circle, color: Colors.green, size: 18),
                             ],
                           ),
                         ],
@@ -199,36 +171,52 @@ class OrderHistoryScreen extends StatelessWidget {
       case 'delivery': icon = Icons.flash_on; color = Colors.red; break;
       default: icon = Icons.shopping_bag; color = Colors.orange;
     }
-
     return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        shape: BoxShape.circle,
-      ),
+      width: 48, height: 48,
+      decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
       child: Icon(icon, color: color, size: 24),
     );
   }
 
-  void _navigateToDetail(BuildContext context, String type, DocumentSnapshot doc, String courierId) {
+  void _navigateToDetail(BuildContext context, String type, DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final String userId = data['userId'] ?? '';
+    final String orderId = doc.id;
+
+    // Определяем имя коллекции в зависимости от типа заказа
+    String collectionName;
+    switch (type) {
+      case 'city':
+        collectionName = 'cityOrders';
+        break;
+      case 'mejCity':
+        collectionName = 'intercityOrders';
+        break;
+      default:
+        collectionName = 'delivery_orders';
+    }
+
+    // Собираем правильную ссылку на документ клиента
+    final orderRef = FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .collection(collectionName)
+        .doc(orderId);
+
     Widget screen;
     switch (type) {
-      case 'normal':
-        screen = CourierOrderDetailScreen(orderRef: doc.reference, courierId: courierId, courierPhone: '');
-        break;
       case 'city':
-        screen = GorodOrderDetailScreen(orderRef: doc.reference, courierId: courierId, courierPhone: '');
+        screen = GorodOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
+        break;
+      case 'mejCity':
+        screen = IntercityOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
         break;
       case 'express':
       case 'delivery':
-        screen = SrokOrderDetailScreen(orderRef: doc.reference, courierId: courierId, courierPhone: '');
-        break;
-      case 'mejCity':
-        screen = IntercityOrderDetailScreen(orderRef: doc.reference, courierId: courierId, courierPhone: '');
+        screen = SrokOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
         break;
       default:
-        screen = CourierOrderDetailScreen(orderRef: doc.reference, courierId: courierId, courierPhone: '');
+        screen = CourierOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
     }
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }

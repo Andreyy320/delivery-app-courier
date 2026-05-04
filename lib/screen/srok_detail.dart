@@ -1,6 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:io';
+// Добавляем пакет для совершения звонков
+import 'package:url_launcher/url_launcher.dart';
+
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+  }
+}
 
 class SrokOrderDetailScreen extends StatefulWidget {
   final DocumentReference orderRef;
@@ -20,60 +35,88 @@ class SrokOrderDetailScreen extends StatefulWidget {
 
 class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
   bool loading = false;
+  bool mapLoading = false;
 
-  // 🔹 Логика без изменений
+  @override
+  void initState() {
+    super.initState();
+    HttpOverrides.global = MyHttpOverrides();
+  }
+
+  // Функция для звонка
+  Future<void> _makePhoneCall(String? phoneNumber) async {
+    if (phoneNumber == null || phoneNumber.isEmpty) return;
+    final Uri launchUri = Uri(
+      scheme: 'tel',
+      path: phoneNumber,
+    );
+    try {
+      if (await canLaunchUrl(launchUri)) {
+        await launchUrl(launchUri);
+      }
+    } catch (e) {
+      debugPrint('Ошибка при звонке: $e');
+    }
+  }
+
+  // --- ТВОЯ ЛОГИКА (ОБНОВЛЕНИЕ ВЕЗДЕ + ВЫХОД НА ГЛАВНУЮ) ---
   Future<void> _takeAction(String action) async {
     setState(() => loading = true);
     try {
-      final snap = await widget.orderRef.get();
-      if (!snap.exists) throw Exception('Заказ не найден');
-      final data = snap.data() as Map<String, dynamic>;
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        DocumentSnapshot freshSnap = await transaction.get(widget.orderRef);
+        if (!freshSnap.exists) throw Exception('Заказ не найден');
 
-      final userId = data['userId'];
-      if (userId == null) throw Exception('ID пользователя не найден');
+        final freshData = freshSnap.data() as Map<String, dynamic>;
+        final userId = freshData['userId'];
+        if (userId == null) throw Exception('ID пользователя не найден');
 
-      final actionTime = FieldValue.serverTimestamp();
+        if (action == 'accepted' && freshData['status'] != 'new') {
+          throw Exception('Этот заказ уже взял другой курьер!');
+        }
 
-      Map<String, dynamic> updateData = {
-        'status': action,
-        'courierId': widget.courierId,
-        'courierPhone': widget.courierPhone,
-        'updatedAt': actionTime,
-      };
+        final actionTime = FieldValue.serverTimestamp();
 
-      if (action == 'accepted' && data['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
-      if (action == 'inProgress' && data['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
-      if (action == 'delivered') {
-        if (data['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
-        if (data['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
-        updateData['deliveredAt'] = actionTime;
-      }
+        Map<String, dynamic> updateData = {
+          'status': action,
+          'courierId': widget.courierId,
+          'courierPhone': widget.courierPhone,
+          'updatedAt': actionTime,
+        };
 
-      // 1. Основной заказ
-      await widget.orderRef.update(updateData);
+        if (action == 'accepted' && freshData['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
+        if (action == 'inProgress' && freshData['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
+        if (action == 'delivered') {
+          if (freshData['acceptedAt'] == null) updateData['acceptedAt'] = actionTime;
+          if (freshData['inProgressAt'] == null) updateData['inProgressAt'] = actionTime;
+          updateData['deliveredAt'] = actionTime;
+        }
 
-      // 2. У КЛИЕНТА
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .collection('delivery_orders')
-          .doc(widget.orderRef.id)
-          .update(updateData);
+        transaction.update(widget.orderRef, updateData);
 
-      // 3. История курьера
-      if (['accepted', 'inProgress', 'delivered'].contains(action)) {
-        await FirebaseFirestore.instance
-            .collection('couriers')
-            .doc(widget.courierId)
-            .collection('history')
-            .doc(widget.orderRef.id)
-            .set({
-          ...data,
-          ...updateData,
-          'type': 'delivery',
-          'actionAt': actionTime,
-        }, SetOptions(merge: true));
-      }
+        DocumentReference clientOrderRef = FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .collection('delivery_orders')
+            .doc(widget.orderRef.id);
+
+        transaction.update(clientOrderRef, updateData);
+
+        if (['accepted', 'inProgress', 'delivered'].contains(action)) {
+          DocumentReference historyRef = FirebaseFirestore.instance
+              .collection('couriers')
+              .doc(widget.courierId)
+              .collection('history')
+              .doc(widget.orderRef.id);
+
+          transaction.set(historyRef, {
+            ...freshData,
+            ...updateData,
+            'type': 'delivery',
+            'actionAt': actionTime,
+          }, SetOptions(merge: true));
+        }
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -87,8 +130,11 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
       }
     } catch (e) {
       if (mounted) {
+        String errorText = e.toString().contains('уже взял другой')
+            ? 'Этот заказ уже занят!'
+            : 'Ошибка: $e';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка обновления: $e'), backgroundColor: Colors.red),
+            SnackBar(content: Text(errorText), backgroundColor: Colors.red)
         );
       }
     } finally {
@@ -107,28 +153,52 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
     }
   }
 
+  Future<void> _handleMapNavigation(Map<String, dynamic> orderData) async {
+    setState(() => mapLoading = true);
+    try {
+      final pickup = orderData['pickup'] as Map<String, dynamic>?;
+      final dropoff = orderData['dropoff'] as Map<String, dynamic>?;
+
+      if (dropoff != null && pickup != null) {
+        double startLat = (pickup['lat'] as num).toDouble();
+        double startLng = (pickup['lng'] as num).toDouble();
+        double endLat = (dropoff['lat'] as num).toDouble();
+        double endLng = (dropoff['lng'] as num).toDouble();
+
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DeliveryMapScreen(
+              targetLocation: LatLng(endLat, endLng),
+              clientName: orderData['clientName'] ?? 'Клиент',
+              restaurantLocation: LatLng(startLat, startLng),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Ошибка навигации: $e");
+    } finally {
+      if (mounted) setState(() => mapLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: const Color(0xFFF4F7FA),
       appBar: AppBar(
-        title: const Text('Срочная доставка', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('ДЕТАЛИ ЗАКАЗА', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2, fontSize: 14)),
         centerTitle: true,
-        backgroundColor: Colors.red[900],
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
         elevation: 0,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Center(child: _urgencyBadge()),
-          ),
-        ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: widget.orderRef.snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('Ошибка загрузки'));
-          if (!snapshot.hasData || !snapshot.data!.exists) return const Center(child: Text('Заказ не найден'));
+          if (!snapshot.hasData || !snapshot.data!.exists) return const Center(child: CircularProgressIndicator());
 
           final data = snapshot.data!.data() as Map<String, dynamic>;
           final status = data['status'] ?? 'new';
@@ -137,14 +207,18 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
             children: [
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   child: Column(
                     children: [
-                      _buildHeaderCard(data),
+                      _buildMainStatusCard(data),
                       const SizedBox(height: 16),
-                      _buildAddressCard(data),
+                      _buildInfoSection(data, status), // Передаем статус
+                      const SizedBox(height: 16),
+                      _buildAddressTimeline(data),
                       const SizedBox(height: 16),
                       _buildTimelineCard(data),
+                      const SizedBox(height: 30),
                     ],
                   ),
                 ),
@@ -157,40 +231,89 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
     );
   }
 
-  Widget _urgencyBadge() {
+  Widget _buildMainStatusCard(Map<String, dynamic> data) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    );
-  }
-
-  Widget _buildHeaderCard(Map<String, dynamic> data) {
-    return Container(
-      padding: const EdgeInsets.all(20),
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 10))],
       ),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Заказ №${widget.orderRef.id.substring(0, 6)}',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Text('${data['totalCost'] ?? 0} ₽',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.red[900])),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('ЗАКАЗ #${widget.orderRef.id.substring(0, 6).toUpperCase()}',
+                      style: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
+                  const SizedBox(height: 4),
+                  const Text('Срочная доставка', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(12)),
+                child: Text('${data['totalCost'] ?? 0} ₽',
+                    style: TextStyle(color: Colors.red[900], fontWeight: FontWeight.w900, fontSize: 18)),
+              )
             ],
           ),
-          const Divider(height: 32),
-          _infoRow(Icons.person_pin_outlined, 'Клиент', data['clientName'] ?? '-'),
-          _infoRow(Icons.phone_android_outlined, 'Телефон', data['clientPhone'] ?? '-'),
-          if (data['comment']?.isNotEmpty == true) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(12)),
-              child: _infoRow(Icons.comment_outlined, 'Инфо', data['comment'], color: Colors.brown[700]),
+          const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Divider()),
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: mapLoading ? null : () => _handleMapNavigation(data),
+              icon: mapLoading
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.directions_outlined, size: 22),
+              label: const Text('ОТКРЫТЬ НАВИГАТОР', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoSection(Map<String, dynamic> data, String status) {
+    final String? phone = data['clientPhone'];
+    // Кнопка активна, если заказ принят и не отменен
+    final bool canCall = status != 'new' && status != 'cancelled';
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
+      child: Column(
+        children: [
+          _modernInfoRow(Icons.person_outline, 'КЛИЕНТ', data['clientName'] ?? 'Не указан'),
+          const SizedBox(height: 16),
+          _modernInfoRow(Icons.phone_outlined, 'КОНТАКТ', phone ?? 'Нет номера'),
+
+          if (canCall && phone != null && phone.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: () => _makePhoneCall(phone),
+                icon: const Icon(Icons.call, size: 20),
+                label: const Text('ПОЗВОНИТЬ КЛИЕНТУ', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red[900],
+                  side: BorderSide(color: Colors.red[900]!, width: 1.5),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+              ),
             ),
           ],
         ],
@@ -198,163 +321,271 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
     );
   }
 
-  Widget _buildAddressCard(Map<String, dynamic> data) {
-    // Извлекаем данные из твоих полей pickup и dropoff
-    final pickup = data['pickup'] as Map<String, dynamic>?;
-    final dropoff = data['dropoff'] as Map<String, dynamic>?;
+  Widget _modernInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
+          child: Icon(icon, size: 20, color: Colors.black87),
+        ),
+        const SizedBox(width: 16),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          ],
+        )
+      ],
+    );
+  }
 
-    // Формируем строку с координатами для отображения
-    final fromStr = pickup != null
-        ? '${pickup['lat'].toStringAsFixed(6)}, ${pickup['lng'].toStringAsFixed(6)}'
-        : 'Координаты не указаны';
-
-    final toStr = dropoff != null
-        ? '${dropoff['lat'].toStringAsFixed(6)}, ${dropoff['lng'].toStringAsFixed(6)}'
-        : 'Координаты не указаны';
-
+  Widget _buildAddressTimeline(Map<String, dynamic> data) {
     return Container(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10)],
-      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
       child: Column(
         children: [
-          _addressRow(
-              Icons.location_on_outlined,
-              Colors.red[900]!,
-              'ТОЧКА ОТПРАВКИ (PICKUP)',
-              fromStr,
-              pickup // передаем мапу для кнопки навигации
+          _addressItem(Icons.circle, Colors.green, 'ТОЧКА ЗАБОРА (PICKUP)', 'Забрать посылку по координатам'),
+          Container(
+            margin: const EdgeInsets.only(left: 11),
+            height: 30,
+            width: 2,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.green, Colors.red[900]!]),
+            ),
           ),
-          Padding(
-            padding: const EdgeInsets.only(left: 11),
-            child: Container(height: 25, width: 2, color: Colors.grey[100]),
-          ),
-          _addressRow(
-              Icons.flag_outlined,
-              Colors.black,
-              'ТОЧКА ДОСТАВКИ (DROPOFF)',
-              toStr,
-              dropoff
-          ),
+          _addressItem(Icons.location_on, Colors.red[900]!, 'ТОЧКА ДОСТАВКИ (DROPOFF)', 'Доставить клиенту'),
         ],
       ),
     );
   }
 
-  // Обновленный ряд с кнопкой навигатора
-  Widget _addressRow(IconData icon, Color color, String label, String address, Map<String, dynamic>? coords) {
+  Widget _addressItem(IconData icon, Color color, String title, String sub) {
     return Row(
       children: [
         Icon(icon, color: color, size: 22),
-        const SizedBox(width: 12),
+        const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: const TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
-              Text(address, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 0.5)),
+              Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 12)),
             ],
           ),
-        ),
-        if (coords != null)
-          IconButton(
-            icon: const Icon(Icons.map_outlined, color: Colors.blue),
-            onPressed: () {
-              // Здесь в будущем добавишь launchUrl для открытия карт
-              // MapsLauncher.launchCoordinates(coords['lat'], coords['lng']);
-              ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Открываем навигатор...'))
-              );
-            },
-          ),
+        )
       ],
     );
   }
 
   Widget _buildTimelineCard(Map<String, dynamic> data) {
-    final acceptedAt = data['acceptedAt'] as Timestamp?;
-    final inProgressAt = data['inProgressAt'] as Timestamp?;
-    final deliveredAt = data['deliveredAt'] as Timestamp?;
-
     return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('СТАТУС ВЫПОЛНЕНИЯ', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
-          const SizedBox(height: 16),
-          _statusStep('Заказ принят', acceptedAt),
-          _statusStep('Курьер в пути', inProgressAt),
-          _statusStep('Доставлено', deliveredAt, isLast: true),
+          const Text('СТАТУС ВЫПОЛНЕНИЯ', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 1, color: Colors.grey)),
+          const SizedBox(height: 20),
+          _modernStatusStep('Заказ принят', data['acceptedAt']),
+          _modernStatusStep('Курьер в пути', data['inProgressAt']),
+          _modernStatusStep('Доставлено клиенту', data['deliveredAt'], isLast: true),
         ],
       ),
     );
   }
 
-  Widget _infoRow(IconData icon, String label, String value, {Color? color}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+  Widget _modernStatusStep(String title, dynamic time, {bool isLast = false}) {
+    bool isDone = time != null;
+    return IntrinsicHeight(
       child: Row(
         children: [
-          Icon(icon, size: 18, color: color ?? Colors.grey[400]),
-          const SizedBox(width: 10),
-          Text('$label: ', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
-          Expanded(child: Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color ?? Colors.black87))),
+          Column(
+            children: [
+              Icon(isDone ? Icons.check_circle : Icons.radio_button_off, size: 18, color: isDone ? Colors.green : Colors.grey[200]),
+              if (!isLast) Expanded(child: Container(width: 2, color: isDone ? Colors.green : Colors.grey[100])),
+            ],
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(title, style: TextStyle(fontSize: 13, fontWeight: isDone ? FontWeight.bold : FontWeight.normal, color: isDone ? Colors.black : Colors.grey)),
+                  if (isDone) Text(DateFormat('HH:mm').format((time as Timestamp).toDate()), style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                ],
+              ),
+            ),
+          )
         ],
       ),
-    );
-  }
-
-
-
-  Widget _statusStep(String title, Timestamp? time, {bool isLast = false}) {
-    return Row(
-      children: [
-        Icon(time != null ? Icons.check_circle : Icons.circle_outlined,
-            size: 16, color: time != null ? Colors.green : Colors.grey[200]),
-        const SizedBox(width: 12),
-        Text(title, style: TextStyle(color: time != null ? Colors.black87 : Colors.grey, fontSize: 13)),
-        const Spacer(),
-        if (time != null) Text(DateFormat('HH:mm').format(time.toDate()), style: const TextStyle(fontSize: 12, color: Colors.grey)),
-      ],
     );
   }
 
   Widget _buildBottomPanel(String status, Map<String, dynamic> data) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 32),
-      decoration: const BoxDecoration(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(35)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, -5))],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (status == 'new') ...[
-            _btn('ПРИНЯТЬ СРОЧНЫЙ ЗАКАЗ', Colors.red[900]!, () => _takeAction('accepted')),
-            const SizedBox(height: 8),
-            TextButton(onPressed: () => _takeAction('cancelled'), child: const Text('Отклонить', style: TextStyle(color: Colors.grey))),
-          ],
-          if (status == 'accepted') _btn('НАЧАТЬ ПУТЬ', Colors.orange[800]!, () => _takeAction('inProgress')),
-          if (status == 'inProgress') _btn('ПОДТВЕРДИТЬ ДОСТАВКУ', Colors.green[700]!, () => _takeAction('delivered')),
-        ],
-      ),
+      child: _buildActionButton(status),
     );
   }
 
-  Widget _btn(String text, Color color, VoidCallback onTap) {
+  Widget _buildActionButton(String status) {
+    if (status == 'delivered') {
+      return Container(
+        height: 60,
+        width: double.infinity,
+        decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(18)),
+        child: const Center(child: Text('✅ ДОСТАВЛЕНО', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w900))),
+      );
+    }
+
+    String text = '';
+    Color color = Colors.black;
+    String nextStatus = '';
+
+    if (status == 'new') { text = 'ПРИНЯТЬ ЗАКАЗ'; color = Colors.red[900]!; nextStatus = 'accepted'; }
+    else if (status == 'accepted') { text = 'НАЧАТЬ ПУТЬ'; color = Colors.orange[800]!; nextStatus = 'inProgress'; }
+    else if (status == 'inProgress') { text = 'ПОДТВЕРДИТЬ ДОСТАВКУ'; color = Colors.green[700]!; nextStatus = 'delivered'; }
+
     return SizedBox(
       width: double.infinity,
-      height: 56,
+      height: 65,
       child: ElevatedButton(
-        onPressed: loading ? null : onTap,
-        style: ElevatedButton.styleFrom(backgroundColor: color, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
-        child: loading ? const CircularProgressIndicator(color: Colors.white) : Text(text, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        onPressed: loading ? null : () => _takeAction(nextStatus),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 0,
+        ),
+        child: loading
+            ? const CircularProgressIndicator(color: Colors.white)
+            : Text(text, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
+      ),
+    );
+  }
+}
+
+// --- КАРТА (БЕЗ ИЗМЕНЕНИЙ) ---
+class DeliveryMapScreen extends StatefulWidget {
+  final LatLng targetLocation;
+  final String clientName;
+  final LatLng? restaurantLocation;
+
+  const DeliveryMapScreen({super.key, required this.targetLocation, required this.clientName, this.restaurantLocation});
+
+  @override
+  State<DeliveryMapScreen> createState() => _DeliveryMapScreenState();
+}
+
+class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
+  final MapController _mapController = MapController();
+  List<LatLng> routePoints = [];
+  bool isLoadingRoute = false;
+  final String orsKey = '5b3ce3597851110001cf6248bf7b24ca801246a5913cae76ef354218';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _buildRouteWorkflow());
+  }
+
+  Future<void> _buildRouteWorkflow() async {
+    if (widget.restaurantLocation == null) {
+      _fitMarkers();
+      return;
+    }
+    setState(() => isLoadingRoute = true);
+    bool success = await _getRouteFromORS();
+    if (!success) await _getRouteFromOSRM();
+    if (mounted) {
+      setState(() => isLoadingRoute = false);
+      _fitMarkers();
+    }
+  }
+
+  Future<bool> _getRouteFromORS() async {
+    final url = 'https://api.openrouteservice.org/v2/directions/driving-car'
+        '?api_key=$orsKey'
+        '&start=${widget.restaurantLocation!.longitude},${widget.restaurantLocation!.latitude}'
+        '&end=${widget.targetLocation.longitude},${widget.targetLocation.latitude}';
+    try {
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final coords = data['features'][0]['geometry']['coordinates'] as List;
+        setState(() {
+          routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList();
+        });
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  }
+
+  Future<void> _getRouteFromOSRM() async {
+    final url = 'https://router.project-osrm.org/route/v1/driving/'
+        '${widget.restaurantLocation!.longitude},${widget.restaurantLocation!.latitude};'
+        '${widget.targetLocation.longitude},${widget.targetLocation.latitude}'
+        '?overview=full&geometries=geojson';
+    try {
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final coords = data['routes'][0]['geometry']['coordinates'] as List;
+        setState(() {
+          routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList();
+        });
+      }
+    } catch (e) { debugPrint('$e'); }
+  }
+
+  void _fitMarkers() {
+    List<LatLng> points = routePoints.isNotEmpty ? routePoints : [widget.targetLocation, if(widget.restaurantLocation != null) widget.restaurantLocation!];
+    _mapController.fitCamera(CameraFit.bounds(bounds: LatLngBounds.fromPoints(points), padding: const EdgeInsets.all(80)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.clientName), backgroundColor: Colors.white, foregroundColor: Colors.black, elevation: 0),
+      body: Stack(
+        children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(initialCenter: widget.targetLocation, initialZoom: 14),
+            children: [
+              TileLayer(
+                  urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                  subdomains: const ['a', 'b', 'c', 'd']
+              ),
+              if (routePoints.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(points: routePoints, color: Colors.white, strokeWidth: 8.0),
+                    Polyline(points: routePoints, color: Colors.indigoAccent, strokeWidth: 5.0),
+                  ],
+                ),
+              MarkerLayer(
+                markers: [
+                  if (widget.restaurantLocation != null)
+                    Marker(point: widget.restaurantLocation!, child: const Icon(Icons.location_on, color: Colors.indigo, size: 35)),
+                  Marker(point: widget.targetLocation, child: const Icon(Icons.flag_circle, color: Colors.redAccent, size: 40)),
+                ],
+              ),
+            ],
+          ),
+          if (isLoadingRoute) const Center(child: CircularProgressIndicator(color: Colors.indigoAccent)),
+        ],
       ),
     );
   }

@@ -51,7 +51,8 @@ class _CourierProfileScreenState extends State<CourierProfileScreen> {
   Widget build(BuildContext context) {
     if (isLoading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: Colors.deepOrange)),
+        backgroundColor: Colors.white,
+        body: Center(child: CircularProgressIndicator(color: Colors.black)),
       );
     }
 
@@ -59,109 +60,90 @@ class _CourierProfileScreenState extends State<CourierProfileScreen> {
     final phone = courierData?['phone'] ?? widget.courierPhone;
 
     return Scaffold(
-      backgroundColor: Colors.grey[50], // Чистый светлый фон
-      body: CustomScrollView( // Используем CustomScrollView для лучшей адаптивности
+      backgroundColor: const Color(0xFFF8F9FB),
+      body: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
         slivers: [
-          // Красивая шапка с градиентом
-          SliverToBoxAdapter(
-            child: Container(
-              width: double.infinity,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.deepOrange, Color(0xFFFF8E53)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(40),
-                  bottomRight: Radius.circular(40),
-                ),
-              ),
-              child: SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.all(30.0),
-                  child: Column(
-                    children: [
-                      CircleAvatar(
-                        radius: 45,
-                        backgroundColor: Colors.white.withOpacity(0.2),
-                        child: const Icon(Icons.person, size: 50, color: Colors.white),
+          SliverAppBar(
+            expandedHeight: 220,
+            backgroundColor: Colors.white,
+            elevation: 0,
+            pinned: true,
+            flexibleSpace: FlexibleSpaceBar(
+              background: Container(
+                color: Colors.white,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 40),
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.black12, width: 1),
                       ),
-                      const SizedBox(height: 15),
-                      Text(
-                        name,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      child: const CircleAvatar(
+                        radius: 40,
+                        backgroundColor: Color(0xFFF0F2F5),
+                        child: Icon(Icons.person_outline_rounded, size: 45, color: Colors.black87),
                       ),
-                      const SizedBox(height: 5),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          phone,
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
-                        ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      name.toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                        color: Colors.black,
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(phone, style: const TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.w500)),
+                  ],
                 ),
               ),
             ),
           ),
 
-          // Основной контент
           SliverPadding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                const Text(
-                  "МЕНЮ",
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 15),
+                _buildSectionHeader("ВАША СТАТИСТИКА ЗА СЕГОДНЯ"),
+                const SizedBox(height: 12),
+                _buildStatsBlock(),
 
-                // Основная карточка меню
+                const SizedBox(height: 32),
+
+                _buildSectionHeader("ИНСТРУМЕНТЫ"),
+                const SizedBox(height: 12),
                 Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(28),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.03),
-                        blurRadius: 20,
-                        offset: const Offset(0, 10),
+                        blurRadius: 30,
+                        offset: const Offset(0, 15),
                       ),
                     ],
                   ),
                   child: Column(
                     children: [
-                      _buildMenuTile(
+                      _buildMenuRow(
                         icon: Icons.history_rounded,
                         title: 'История заказов',
                         onTap: () => Navigator.push(
                           context,
-                          MaterialPageRoute(
-                            builder: (_) => OrderHistoryScreen(courierId: widget.courierId),
-                          ),
+                          MaterialPageRoute(builder: (_) => OrderHistoryScreen(courierId: widget.courierId)),
                         ),
                       ),
-                      _buildDivider(),
-                      _buildMenuTile(
-                        icon: Icons.local_shipping_rounded,
-                        title: 'Мои текущие заказы',
+                      _buildMenuDivider(),
+                      _buildMenuRow(
+                        icon: Icons.local_shipping_outlined,
+                        title: 'Текущие задачи',
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -172,10 +154,10 @@ class _CourierProfileScreenState extends State<CourierProfileScreen> {
                           ),
                         ),
                       ),
-                      _buildDivider(),
-                      _buildMenuTile(
-                        icon: Icons.lock_reset_rounded,
-                        title: 'Изменить пароль',
+                      _buildMenuDivider(),
+                      _buildMenuRow(
+                        icon: Icons.lock_outline_rounded,
+                        title: 'Безопасность',
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -193,35 +175,29 @@ class _CourierProfileScreenState extends State<CourierProfileScreen> {
 
                 const SizedBox(height: 40),
 
-                // Кнопка выхода (делаем её стильной, а не просто красной)
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton.icon(
-                    onPressed: () {
-                      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-                        MaterialPageRoute(builder: (_) => const LoginScreen()),
-                            (route) => false,
-                      );
-                    },
-                    icon: const Icon(Icons.logout_rounded, color: Colors.redAccent),
-                    label: const Text(
-                      'Выйти из аккаунта',
-                      style: TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        side: BorderSide(color: Colors.redAccent.withOpacity(0.2)),
-                      ),
-                    ),
+                OutlinedButton(
+                  onPressed: () {
+                    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                          (route) => false,
+                    );
+                  },
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 60),
+                    side: const BorderSide(color: Color(0xFFEEEEEE)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    foregroundColor: Colors.redAccent,
+                  ),
+                  child: const Text('ВЫЙТИ ИЗ АККАУНТА', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, letterSpacing: 1)),
+                ),
+                const SizedBox(height: 20),
+                const Center(
+                  child: Text(
+                    "Версия 1.0.4 • ПМР",
+                    style: TextStyle(color: Colors.black12, fontSize: 10, fontWeight: FontWeight.bold),
                   ),
                 ),
-                const SizedBox(height: 50),
+                const SizedBox(height: 40),
               ]),
             ),
           ),
@@ -230,41 +206,98 @@ class _CourierProfileScreenState extends State<CourierProfileScreen> {
     );
   }
 
-  // Вспомогательный виджет для пунктов меню
-  Widget _buildMenuTile({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-      leading: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.deepOrange.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, color: Colors.deepOrange, size: 22),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-          color: Colors.black87,
-        ),
-      ),
-      trailing: const Icon(Icons.chevron_right_rounded, color: Colors.grey),
-      onTap: onTap,
+  Widget _buildStatsBlock() {
+    DateTime now = DateTime.now();
+    DateTime startOfToday = DateTime(now.year, now.month, now.day);
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('couriers')
+          .doc(widget.courierId)
+          .collection('history')
+          .where('status', isEqualTo: 'delivered')
+          .snapshots(),
+      builder: (context, snapshot) {
+        int todayOrdersCount = 0;
+        double todayEarnings = 0;
+
+        if (snapshot.hasData) {
+          for (var doc in snapshot.data!.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            Timestamp? ts = data['updatedAt'] ?? data['statusUpdatedAt'];
+
+            if (ts != null) {
+              DateTime date = ts.toDate();
+              // Проверяем, был ли заказ выполнен сегодня
+              if (date.isAfter(startOfToday)) {
+                todayOrdersCount++;
+                final price = data['totalPrice'] ?? data['total'] ?? 0;
+                todayEarnings += (price is num) ? price.toDouble() : 0;
+              }
+            }
+          }
+        }
+
+        return Row(
+          children: [
+            Expanded(child: _statCard("ЗАКАЗОВ СЕГОДНЯ", todayOrdersCount.toString(), const Color(0xFF3B82F6))),
+            const SizedBox(width: 12),
+            Expanded(child: _statCard("СУММА (РУБ)", todayEarnings.toStringAsFixed(0), const Color(0xFF10B981))),
+          ],
+        );
+      },
     );
   }
 
-  Widget _buildDivider() {
-    return Divider(
-      height: 1,
-      indent: 60,
-      endIndent: 20,
-      color: Colors.grey.withOpacity(0.1),
+  Widget _statCard(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: color.withOpacity(0.1), width: 1),
+        boxShadow: [
+          BoxShadow(color: color.withOpacity(0.02), blurRadius: 15, offset: const Offset(0, 8)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: color, letterSpacing: 0.5)),
+          const SizedBox(height: 8),
+          Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.black87)),
+        ],
+      ),
     );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(title, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.black26, letterSpacing: 2)),
+    );
+  }
+
+  Widget _buildMenuRow({required IconData icon, required String title, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(28),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: Colors.black87),
+            const SizedBox(width: 16),
+            Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87)),
+            const Spacer(),
+            const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.black12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuDivider() {
+    return Divider(height: 1, indent: 64, endIndent: 24, color: Colors.black.withOpacity(0.04));
   }
 }
