@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'home_screen.dart';
+import 'notification_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -19,11 +21,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
+  // --- СИСТЕМА УВЕДОМЛЕНИЙ ---
+  final Set<String> _notifiedActions = {}; // Храним "ID_статус"
+  late DateTime _startTime;
+
   @override
   void initState() {
     super.initState();
     phoneController.text = '+373 ';
-
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -40,6 +45,25 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     super.dispose();
   }
 
+
+  // --- ЛОГИКА ВХОДА ---
+  Future<void> _updateFcmToken(String courierId) async {
+    try {
+      String? token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await FirebaseFirestore.instance
+            .collection('couriers')
+            .doc(courierId)
+            .update({
+          'fcmToken': token,
+          'lastTokenUpdate': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (e) {
+      print("FCM Token error: $e");
+    }
+  }
+
   Future<void> _login() async {
     final phone = phoneController.text.replaceAll(' ', '');
     final password = passwordController.text.trim();
@@ -49,17 +73,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       return;
     }
 
-    setState(() {
-      loading = true;
-      errorText = null;
-    });
+    setState(() => loading = true);
 
     try {
-      // ИЩЕМ В БАЗЕ СОВПАДЕНИЕ ПО ЛОГИНУ И ПАРОЛЮ (ОБЫЧНЫЙ ТЕКСТ)
       final query = await FirebaseFirestore.instance
           .collection('couriers')
           .where('phone', isEqualTo: phone)
-          .where('password', isEqualTo: password) // Сравниваем текст напрямую
+          .where('password', isEqualTo: password)
           .where('active', isEqualTo: true)
           .limit(1)
           .get();
@@ -72,15 +92,19 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         return;
       }
 
-      final courierData = query.docs.first.data();
+      final courierDoc = query.docs.first;
+      final courierData = courierDoc.data();
 
+      await _updateFcmToken(courierDoc.id);
+
+      // Запускаем прослушку перед переходом
       if (!mounted) return;
 
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
           builder: (_) => CourierMainScreen(
-            courierId: query.docs.first.id,
+            courierId: courierDoc.id,
             courierPhone: courierData['phone'] ?? '',
           ),
         ),
@@ -110,49 +134,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
               opacity: _fadeAnimation,
               child: Center(
                 child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
                   padding: const EdgeInsets.symmetric(horizontal: 40),
                   child: Column(
                     children: [
-                      Container(
-                        height: 90,
-                        width: 90,
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(28),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.15),
-                              blurRadius: 25,
-                              offset: const Offset(0, 10),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                            Icons.delivery_dining_rounded,
-                            size: 55,
-                            color: Colors.white
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                      const Text(
-                        'COURIER',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 2,
-                          color: Colors.black,
-                        ),
-                      ),
-                      const Text(
-                        'MANAGEMENT SYSTEM',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.black26,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
+                      _buildLogo(),
                       const SizedBox(height: 50),
                       _buildLabel("ТЕЛЕФОН КУРЬЕРА"),
                       _buildField(
@@ -177,63 +162,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                         hint: "••••••••",
                         isPassword: true,
                       ),
-                      if (errorText != null) ...[
-                        const SizedBox(height: 20),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.redAccent.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            errorText!,
-                            style: const TextStyle(
-                              color: Colors.redAccent,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
+                      if (errorText != null) _buildError(),
                       const SizedBox(height: 40),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 65,
-                        child: ElevatedButton(
-                          onPressed: loading ? null : _login,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.black,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(22),
-                            ),
-                          ),
-                          child: loading
-                              ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                          )
-                              : const Text(
-                            'ВОЙТИ В СИСТЕМУ',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                      ),
+                      _buildLoginButton(),
                       const SizedBox(height: 32),
-                      const Text(
-                        "Версия терминала 1.0.4",
-                        style: TextStyle(
-                          fontSize: 9,
-                          color: Colors.black12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      const Text("Версия терминала 1.0.4", style: TextStyle(fontSize: 9, color: Colors.black12, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
@@ -245,56 +178,52 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildLabel(String text) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.only(left: 8, bottom: 8),
-        child: Text(
-          text,
-          style: const TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w900,
-            color: Colors.black26,
-            letterSpacing: 1.2,
-          ),
+  // --- ВСПОМОГАТЕЛЬНЫЕ ВИДЖЕТЫ ---
+  Widget _buildLogo() {
+    return Column(
+      children: [
+        Container(
+          height: 90, width: 90,
+          decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(28)),
+          child: const Icon(Icons.delivery_dining_rounded, size: 55, color: Colors.white),
         ),
+        const SizedBox(height: 32),
+        const Text('COURIER', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 2, color: Colors.black)),
+        const Text('MANAGEMENT SYSTEM', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.black26, letterSpacing: 1.5)),
+      ],
+    );
+  }
+
+  Widget _buildError() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Text(errorText!, style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _buildLoginButton() {
+    return SizedBox(
+      width: double.infinity, height: 65,
+      child: ElevatedButton(
+        onPressed: loading ? null : _login,
+        style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22))),
+        child: loading ? const CircularProgressIndicator(color: Colors.white) : const Text('ВОЙТИ В СИСТЕМУ', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
       ),
     );
   }
 
-  Widget _buildField({
-    required TextEditingController controller,
-    required IconData icon,
-    required String hint,
-    bool isPassword = false,
-    bool isPhone = false,
-    Function(String)? onChanged,
-  }) {
+  Widget _buildLabel(String text) {
+    return Align(alignment: Alignment.centerLeft, child: Padding(padding: const EdgeInsets.only(left: 8, bottom: 8), child: Text(text, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.black26))));
+  }
+
+  Widget _buildField({required TextEditingController controller, required IconData icon, required String hint, bool isPassword = false, bool isPhone = false, Function(String)? onChanged}) {
     return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F9FB),
-        borderRadius: BorderRadius.circular(20),
-      ),
+      decoration: BoxDecoration(color: const Color(0xFFF8F9FB), borderRadius: BorderRadius.circular(20)),
       child: TextField(
-        controller: controller,
-        obscureText: isPassword,
-        onChanged: onChanged,
+        controller: controller, obscureText: isPassword, onChanged: onChanged,
         keyboardType: isPhone ? TextInputType.number : TextInputType.text,
-        inputFormatters: isPhone ? [
-          FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ]')),
-          LengthLimitingTextInputFormatter(13),
-        ] : [],
-        cursorColor: Colors.black,
-        style: const TextStyle(fontWeight: FontWeight.bold),
-        decoration: InputDecoration(
-          counterText: "",
-          hintText: hint,
-          hintStyle: const TextStyle(color: Colors.black12, fontWeight: FontWeight.normal),
-          prefixIcon: Icon(icon, color: Colors.black45, size: 20),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-          contentPadding: const EdgeInsets.symmetric(vertical: 22),
-        ),
+        inputFormatters: isPhone ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ]')), LengthLimitingTextInputFormatter(13)] : [],
+        decoration: InputDecoration(hintText: hint, prefixIcon: Icon(icon, color: Colors.black45, size: 20), border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 22)),
       ),
     );
   }

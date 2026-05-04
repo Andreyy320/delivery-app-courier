@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
 
-// Настройка для обхода проблем с сертификатами (важно для работы карт на старых Android)
+// Настройка для обхода проблем с сертификатами
 class MyHttpOverrides extends HttpOverrides {
   @override
   HttpClient createHttpClient(SecurityContext? context) {
@@ -65,18 +65,14 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
     return null;
   }
 
-  // ЛОГИКА ВНУТРЕННЕЙ КАРТЫ (Вместо перехода в Google Maps)
   Future<void> _handleMapNavigation(Map<String, dynamic> data) async {
     setState(() => mapLoading = true);
     try {
       double? clientLat = _parseCoordinate(data['clientLat']);
       double? clientLng = _parseCoordinate(data['clientLng']);
-
-      // Получаем координаты магазина
       double? shopLat = _parseCoordinate(data['shopLat']);
       double? shopLng = _parseCoordinate(data['shopLng']);
 
-      // Если в заказе нет координат магазина, ищем в коллекции категорий
       if (shopLat == null && data['shopId'] != null) {
         var shopSnap = await FirebaseFirestore.instance.collection('categories').doc(data['shopId']).get();
         if (shopSnap.exists) {
@@ -294,6 +290,7 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
 
   Widget _buildClientCard(Map<String, dynamic> data) {
     final String? phone = data['clientPhone'];
+    final String comment = data['comment'] ?? 'Нет комментария';
 
     return _cardWrapper(
       child: Column(
@@ -325,7 +322,7 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
                 onPressed: mapLoading ? null : () => _handleMapNavigation(data),
                 icon: mapLoading
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.map_outlined, color: Color(0xFF2D31FA)), // Иконка карты
+                    : const Icon(Icons.map_outlined, color: Color(0xFF2D31FA)),
                 style: IconButton.styleFrom(
                   backgroundColor: const Color(0xFF2D31FA).withOpacity(0.1),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -333,6 +330,9 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
               ),
             ],
           ),
+          const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Divider()),
+          // ПОЛЕ КОММЕНТАРИЯ
+          _infoRow(Icons.comment_outlined, 'Комментарий к заказу', comment, color: Colors.orange),
         ],
       ),
     );
@@ -439,6 +439,7 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
 
   Widget _infoRow(IconData icon, String label, String value, {bool isMain = false, Color? color}) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
           padding: const EdgeInsets.all(8),
@@ -451,7 +452,7 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 11, fontWeight: FontWeight.bold)),
-              Text(value, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: isMain ? 16 : 14, fontWeight: isMain ? FontWeight.w800 : FontWeight.w600)),
+              Text(value, style: TextStyle(fontSize: isMain ? 16 : 14, fontWeight: isMain ? FontWeight.w800 : FontWeight.w600)),
             ],
           ),
         ),
@@ -515,8 +516,6 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
 
   String _formatDate(Timestamp? ts) => ts != null ? DateFormat('dd.MM HH:mm').format(ts.toDate()) : '-';
 }
-
-// --- ОТДЕЛЬНЫЙ ЭКРАН ВСТРОЕННОЙ КАРТЫ С МАРШРУТОМ ---
 
 class OrderMapScreen extends StatefulWidget {
   final LatLng? startLocation;
@@ -591,12 +590,10 @@ class _OrderMapScreenState extends State<OrderMapScreen> {
               if (routePoints.isNotEmpty)
                 PolylineLayer(
                   polylines: [
-                    // Основная линия маршрута
                     Polyline(
                       points: routePoints,
                       color: const Color(0xFF2D31FA),
                       strokeWidth: 5.0,
-                      // Параметры isOutline и outlineColor удалены, так как они не поддерживаются в текущей версии
                     ),
                   ],
                 ),
