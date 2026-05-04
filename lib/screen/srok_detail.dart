@@ -6,7 +6,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
-// Добавляем пакет для совершения звонков
 import 'package:url_launcher/url_launcher.dart';
 
 class MyHttpOverrides extends HttpOverrides {
@@ -43,13 +42,9 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
     HttpOverrides.global = MyHttpOverrides();
   }
 
-  // Функция для звонка
   Future<void> _makePhoneCall(String? phoneNumber) async {
     if (phoneNumber == null || phoneNumber.isEmpty) return;
-    final Uri launchUri = Uri(
-      scheme: 'tel',
-      path: phoneNumber,
-    );
+    final Uri launchUri = Uri(scheme: 'tel', path: phoneNumber);
     try {
       if (await canLaunchUrl(launchUri)) {
         await launchUrl(launchUri);
@@ -59,7 +54,6 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
     }
   }
 
-  // --- ТВОЯ ЛОГИКА (ОБНОВЛЕНИЕ ВЕЗДЕ + ВЫХОД НА ГЛАВНУЮ) ---
   Future<void> _takeAction(String action) async {
     setState(() => loading = true);
     try {
@@ -213,7 +207,7 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
                     children: [
                       _buildMainStatusCard(data),
                       const SizedBox(height: 16),
-                      _buildInfoSection(data, status), // Передаем статус
+                      _buildInfoSection(data, status),
                       const SizedBox(height: 16),
                       _buildAddressTimeline(data),
                       const SizedBox(height: 16),
@@ -234,7 +228,7 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
   Widget _buildMainStatusCard(Map<String, dynamic> data) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20), // Уменьшили общий паддинг для компактности
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(30),
@@ -243,35 +237,50 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('ЗАКАЗ #${widget.orderRef.id.substring(0, 6).toUpperCase()}',
-                      style: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1)),
-                  const SizedBox(height: 4),
-                  const Text('Срочная доставка', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-                ],
+              Expanded( // Текст теперь не выталкивает цену
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'ЗАКАЗ #${widget.orderRef.id.substring(0, 6).toUpperCase()}',
+                      style: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.bold, fontSize: 11, letterSpacing: 0.5),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Срочная доставка',
+                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(12)),
-                child: Text('${data['totalCost'] ?? 0} Руб',
-                    style: TextStyle(color: Colors.red[900], fontWeight: FontWeight.w900, fontSize: 18)),
+              const SizedBox(width: 10),
+              Container( // Компактная рамочка для цены
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${data['totalCost'] ?? 0} Руб',
+                  style: TextStyle(color: Colors.red[900], fontWeight: FontWeight.w900, fontSize: 16),
+                ),
               )
             ],
           ),
-          const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Divider()),
+          const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Divider()),
           SizedBox(
             width: double.infinity,
-            height: 56,
+            height: 54,
             child: ElevatedButton.icon(
               onPressed: mapLoading ? null : () => _handleMapNavigation(data),
               icon: mapLoading
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Icon(Icons.directions_outlined, size: 22),
-              label: const Text('ОТКРЫТЬ НАВИГАТОР', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                  : const Icon(Icons.directions_outlined, size: 20),
+              label: const Text('ОТКРЫТЬ НАВИГАТОР', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5, fontSize: 13)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
@@ -287,7 +296,6 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
 
   Widget _buildInfoSection(Map<String, dynamic> data, String status) {
     final String? phone = data['clientPhone'];
-    // Кнопка активна, если заказ принят и не отменен
     final bool canCall = status != 'new' && status != 'cancelled';
 
     return Container(
@@ -330,12 +338,14 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
           child: Icon(icon, size: 20, color: Colors.black87),
         ),
         const SizedBox(width: 16),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+              Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+          ),
         )
       ],
     );
@@ -347,7 +357,7 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
       child: Column(
         children: [
-          _addressItem(Icons.circle, Colors.green, 'ТОЧКА ЗАБОРА (PICKUP)', 'Забрать посылку по координатам'),
+          _addressItem(Icons.circle, Colors.green, 'ТОЧКА ЗАБОРА', 'Забрать посылку по координатам'),
           Container(
             margin: const EdgeInsets.only(left: 11),
             height: 30,
@@ -356,7 +366,7 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
               gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.green, Colors.red[900]!]),
             ),
           ),
-          _addressItem(Icons.location_on, Colors.red[900]!, 'ТОЧКА ДОСТАВКИ (DROPOFF)', 'Доставить клиенту'),
+          _addressItem(Icons.location_on, Colors.red[900]!, 'ТОЧКА ДОСТАВКИ', 'Доставить клиенту'),
         ],
       ),
     );
@@ -372,7 +382,7 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 0.5)),
-              Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+              Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
             ],
           ),
         )
@@ -475,7 +485,6 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
   }
 }
 
-// --- КАРТА (БЕЗ ИЗМЕНЕНИЙ) ---
 class DeliveryMapScreen extends StatefulWidget {
   final LatLng targetLocation;
   final String clientName;

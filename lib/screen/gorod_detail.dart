@@ -216,7 +216,7 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
                     children: [
                       _buildMainCard(data),
                       const SizedBox(height: 16),
-                      _buildClientInfoCard(data, status), // Передаем статус
+                      _buildClientInfoCard(data, status),
                       const SizedBox(height: 16),
                       _buildRouteTimeline(data),
                       const SizedBox(height: 16),
@@ -235,7 +235,7 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
 
   Widget _buildMainCard(Map<String, dynamic> data) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20), // Слегка уменьшили паддинг для экономии места
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(30),
@@ -244,27 +244,37 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              const Text('Городская доставка', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              const Expanded( // Теперь текст занимает всё свободное место и не выталкивает цену
+                child: Text(
+                  'Городская доставка',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container( // Оптимизированная рамка для цены
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(12)),
-                child: Text('${data['totalPrice'] ?? 0} Руб',
-                    style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.w900, fontSize: 18)),
+                child: Text(
+                  '${data['totalPrice'] ?? 0} Руб',
+                  style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.w900, fontSize: 16),
+                ),
               )
             ],
           ),
-          const Divider(height: 32),
+          const Divider(height: 30),
           SizedBox(
             width: double.infinity,
-            height: 56,
+            height: 54,
             child: ElevatedButton.icon(
               onPressed: mapLoading ? null : () => _handleMapNavigation(data),
               icon: mapLoading
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Icon(Icons.map_outlined),
-              label: const Text('ОТКРЫТЬ НАВИГАТОР', style: TextStyle(fontWeight: FontWeight.w900)),
+                  : const Icon(Icons.map_outlined, size: 20),
+              label: const Text('ОТКРЫТЬ НАВИГАТОР', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
@@ -280,7 +290,6 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
 
   Widget _buildClientInfoCard(Map<String, dynamic> data, String status) {
     final String? phone = data['clientPhone'];
-    // Кнопка звонка видна только если заказ уже принят в работу
     final bool isAccepted = status != 'new' && status != 'cancelled';
 
     return Container(
@@ -293,7 +302,6 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
           const SizedBox(height: 12),
           _infoTile(Icons.phone_outlined, 'ТЕЛЕФОН', phone ?? '-'),
 
-          // САМА КНОПКА ЗВОНКА
           if (isAccepted && phone != null && phone.isNotEmpty) ...[
             const SizedBox(height: 16),
             SizedBox(
@@ -336,12 +344,14 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
       children: [
         Icon(icon, size: 20, color: Colors.orange[700]),
         const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10, fontWeight: FontWeight.bold)),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10, fontWeight: FontWeight.bold)),
+              Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+          ),
         )
       ],
     );
