@@ -249,7 +249,7 @@ class _IntercityOrderDetailScreenState extends State<IntercityOrderDetailScreen>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(color: Colors.indigo[50], borderRadius: BorderRadius.circular(12)),
-                child: Text('${data['totalPrice'] ?? 0} ₽',
+                child: Text('${data['totalPrice'] ?? 0} Руб',
                     style: TextStyle(color: Colors.indigo[900], fontWeight: FontWeight.w900, fontSize: 18)),
               )
             ],

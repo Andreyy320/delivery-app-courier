@@ -354,7 +354,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ],
           ),
           const Divider(height: 20),
-          _infoRow(Icons.payment_outlined, 'СУММА', '${data['total'] ?? 0} MDL', isPrice: true),
+          _infoRow(Icons.payment_outlined, 'СУММА', '${data['total'] ?? 0} Руб', isPrice: true),
         ],
       ),
     );

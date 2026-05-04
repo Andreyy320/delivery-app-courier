@@ -462,7 +462,7 @@
                                     ),
                                   ),
                                   Text(
-                                    '$totalCost ₽',
+                                    '$totalCost Руб',
                                     style: const TextStyle(
                                       fontSize: 22,
                                       fontWeight: FontWeight.w900,
@@ -680,7 +680,7 @@
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Text(
-                                        '$totalCost ₽',
+                                        '$totalCost Руб',
                                         style: const TextStyle(
                                           fontSize: 20,
                                           fontWeight: FontWeight.w900,
@@ -843,7 +843,7 @@
                                       ],
                                     ),
                                   ),
-                                  Text('$price MDL', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.indigo)),
+                                  Text('$price Руб', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.indigo)),
                                 ],
                               ),
                               const Divider(height: 24),

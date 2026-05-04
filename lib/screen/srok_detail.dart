@@ -257,7 +257,7 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(12)),
-                child: Text('${data['totalCost'] ?? 0} ₽',
+                child: Text('${data['totalCost'] ?? 0} Руб',
                     style: TextStyle(color: Colors.red[900], fontWeight: FontWeight.w900, fontSize: 18)),
               )
             ],

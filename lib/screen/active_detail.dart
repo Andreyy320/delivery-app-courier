@@ -1,8 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-// Импортируем для звонков и навигации
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:io';
+
+// Настройка для обхода проблем с сертификатами (важно для работы карт на старых Android)
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+  }
+}
 
 class CourierOrderDetailScreen extends StatefulWidget {
   final DocumentReference orderRef;
@@ -22,15 +35,20 @@ class CourierOrderDetailScreen extends StatefulWidget {
 
 class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
   bool loading = false;
-  bool mapLoading = false; // Состояние загрузки карты
+  bool mapLoading = false;
 
   final Color primaryColor = const Color(0xFF2D31FA);
   final Color backgroundColor = const Color(0xFFF8FAFF);
   final Color cardColor = Colors.white;
 
+  @override
+  void initState() {
+    super.initState();
+    HttpOverrides.global = MyHttpOverrides();
+  }
+
   // --- ФУНКЦИИ ВЗАИМОДЕЙСТВИЯ ---
 
-  // Звонок клиенту
   Future<void> _makePhoneCall(String? phoneNumber) async {
     if (phoneNumber == null || phoneNumber.isEmpty) return;
     final Uri launchUri = Uri(scheme: 'tel', path: phoneNumber);
@@ -39,7 +57,6 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
     }
   }
 
-  // Переход к навигации (Google Maps / Apple Maps)
   double? _parseCoordinate(dynamic value) {
     if (value == null) return null;
     if (value is double) return value;
@@ -48,32 +65,45 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
     return null;
   }
 
-  Future<void> _openMapNavigation(Map<String, dynamic> data) async {
+  // ЛОГИКА ВНУТРЕННЕЙ КАРТЫ (Вместо перехода в Google Maps)
+  Future<void> _handleMapNavigation(Map<String, dynamic> data) async {
     setState(() => mapLoading = true);
     try {
-      double? lat = _parseCoordinate(data['clientLat']);
-      double? lng = _parseCoordinate(data['clientLng']);
+      double? clientLat = _parseCoordinate(data['clientLat']);
+      double? clientLng = _parseCoordinate(data['clientLng']);
 
-      if (lat != null && lng != null) {
-        final Uri googleMapsUri = Uri.parse("google.navigation:q=$lat,$lng&mode=d");
-        final Uri appleMapsUri = Uri.parse("http://maps.apple.com/?daddr=$lat,$lng");
+      // Получаем координаты магазина
+      double? shopLat = _parseCoordinate(data['shopLat']);
+      double? shopLng = _parseCoordinate(data['shopLng']);
 
-        if (await canLaunchUrl(googleMapsUri)) {
-          await launchUrl(googleMapsUri);
-        } else if (await canLaunchUrl(appleMapsUri)) {
-          await launchUrl(appleMapsUri);
-        } else {
-          throw 'Could not launch maps';
+      // Если в заказе нет координат магазина, ищем в коллекции категорий
+      if (shopLat == null && data['shopId'] != null) {
+        var shopSnap = await FirebaseFirestore.instance.collection('categories').doc(data['shopId']).get();
+        if (shopSnap.exists) {
+          shopLat = _parseCoordinate(shopSnap.data()?['lat']);
+          shopLng = _parseCoordinate(shopSnap.data()?['lng']);
         }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Координаты адреса не найдены')),
+      }
+
+      if (clientLat != null && clientLng != null) {
+        if (!mounted) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OrderMapScreen(
+              startLocation: shopLat != null ? LatLng(shopLat, shopLng!) : null,
+              targetLocation: LatLng(clientLat, clientLng),
+              clientName: data['clientName'] ?? 'Клиент',
+            ),
+          ),
         );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Координаты клиента не найдены')));
       }
     } catch (e) {
-      debugPrint(e.toString());
+      debugPrint("Ошибка навигации: $e");
     } finally {
-      setState(() => mapLoading = false);
+      if (mounted) setState(() => mapLoading = false);
     }
   }
 
@@ -273,7 +303,6 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
           const SizedBox(height: 16),
           _infoRow(Icons.person_rounded, 'Получатель', data['clientName'] ?? 'Без имени'),
           const SizedBox(height: 12),
-          // Ряд с телефоном и кнопкой вызова
           Row(
             children: [
               Expanded(child: _infoRow(Icons.phone_rounded, 'Контактный номер', phone ?? '-')),
@@ -289,15 +318,14 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          // Ряд с адресом и кнопкой навигации
           Row(
             children: [
               Expanded(child: _infoRow(Icons.location_on_rounded, 'Адрес назначения', data['address'] ?? 'Указан на карте', color: primaryColor)),
               IconButton(
-                onPressed: mapLoading ? null : () => _openMapNavigation(data),
+                onPressed: mapLoading ? null : () => _handleMapNavigation(data),
                 icon: mapLoading
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.navigation_rounded, color: Color(0xFF2D31FA)),
+                    : const Icon(Icons.map_outlined, color: Color(0xFF2D31FA)), // Иконка карты
                 style: IconButton.styleFrom(
                   backgroundColor: const Color(0xFF2D31FA).withOpacity(0.1),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -329,7 +357,7 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
                 ),
                 const SizedBox(width: 12),
                 Expanded(child: Text('${item['name']}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15))),
-                Text('${(item['price'] ?? 0) * (item['quantity'] ?? 1)} MDL', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                Text('${(item['price'] ?? 0) * (item['quantity'] ?? 1)} Руб', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
               ],
             ),
           )).toList(),
@@ -338,7 +366,7 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text('ИТОГО', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-              Text('${data['total'] ?? 0} MDL', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: primaryColor)),
+              Text('${data['total'] ?? 0} Руб', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: primaryColor)),
             ],
           ),
         ],
@@ -486,4 +514,110 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
   }
 
   String _formatDate(Timestamp? ts) => ts != null ? DateFormat('dd.MM HH:mm').format(ts.toDate()) : '-';
+}
+
+// --- ОТДЕЛЬНЫЙ ЭКРАН ВСТРОЕННОЙ КАРТЫ С МАРШРУТОМ ---
+
+class OrderMapScreen extends StatefulWidget {
+  final LatLng? startLocation;
+  final LatLng targetLocation;
+  final String clientName;
+
+  const OrderMapScreen({super.key, this.startLocation, required this.targetLocation, required this.clientName});
+
+  @override
+  State<OrderMapScreen> createState() => _OrderMapScreenState();
+}
+
+class _OrderMapScreenState extends State<OrderMapScreen> {
+  final MapController _mapController = MapController();
+  List<LatLng> routePoints = [];
+  bool isLoadingRoute = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.startLocation != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _fetchRoute());
+    }
+  }
+
+  Future<void> _fetchRoute() async {
+    setState(() => isLoadingRoute = true);
+    final url = 'https://router.project-osrm.org/route/v1/driving/${widget.startLocation!.longitude},${widget.startLocation!.latitude};${widget.targetLocation.longitude},${widget.targetLocation.latitude}?overview=full&geometries=geojson';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final coords = data['routes'][0]['geometry']['coordinates'] as List;
+        setState(() {
+          routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList();
+        });
+        _zoomToFit();
+      }
+    } catch (e) {
+      debugPrint("Ошибка OSRM: $e");
+    } finally {
+      if (mounted) setState(() => isLoadingRoute = false);
+    }
+  }
+
+  void _zoomToFit() {
+    final bounds = LatLngBounds.fromPoints([
+      widget.targetLocation,
+      if (widget.startLocation != null) widget.startLocation!,
+    ]);
+    _mapController.fitCamera(CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(70)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Маршрут: ${widget.clientName}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white, foregroundColor: Colors.black, elevation: 0,
+      ),
+      body: Stack(
+        children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(initialCenter: widget.targetLocation, initialZoom: 14),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                subdomains: const ['a', 'b', 'c', 'd'],
+              ),
+              if (routePoints.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    // Основная линия маршрута
+                    Polyline(
+                      points: routePoints,
+                      color: const Color(0xFF2D31FA),
+                      strokeWidth: 5.0,
+                      // Параметры isOutline и outlineColor удалены, так как они не поддерживаются в текущей версии
+                    ),
+                  ],
+                ),
+              MarkerLayer(markers: [
+                if (widget.startLocation != null)
+                  Marker(point: widget.startLocation!, child: const Icon(Icons.store, color: Colors.black, size: 30)),
+                Marker(point: widget.targetLocation, child: const Icon(Icons.location_on, color: Colors.red, size: 35)),
+              ]),
+            ],
+          ),
+          if (isLoadingRoute) const Center(child: CircularProgressIndicator()),
+          Positioned(
+            bottom: 30, right: 20,
+            child: FloatingActionButton(
+              backgroundColor: Colors.white,
+              onPressed: _zoomToFit,
+              child: const Icon(Icons.center_focus_strong, color: Colors.black),
+            ),
+          )
+        ],
+      ),
+    );
+  }
 }

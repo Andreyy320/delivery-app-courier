@@ -250,7 +250,7 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(12)),
-                child: Text('${data['totalPrice'] ?? 0} ₽',
+                child: Text('${data['totalPrice'] ?? 0} Руб',
                     style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.w900, fontSize: 18)),
               )
             ],

@@ -141,7 +141,7 @@ class OrderHistoryScreen extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text('$price MDL', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+                              Text('$price Руб', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
                               const SizedBox(height: 4),
                               Text(dateStr, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
                               const SizedBox(height: 8),

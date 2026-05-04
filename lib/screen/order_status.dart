@@ -119,7 +119,7 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
                   ),
                 ),
                 Text(
-                  '$price MDL',
+                  '$price Руб',
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
                 ),
               ],
