@@ -231,7 +231,7 @@ class _CourierProfileScreenState extends State<CourierProfileScreen> {
               // Проверяем, был ли заказ выполнен сегодня
               if (date.isAfter(startOfToday)) {
                 todayOrdersCount++;
-                final price = data['totalPrice'] ?? data['total'] ?? 0;
+                final price = data['deliveryPrice'] ?? data['totalPrice'] ?? 0;
                 todayEarnings += (price is num) ? price.toDouble() : 0;
               }
             }
@@ -301,3 +301,5 @@ class _CourierProfileScreenState extends State<CourierProfileScreen> {
     return Divider(height: 1, indent: 64, endIndent: 24, color: Colors.black.withOpacity(0.04));
   }
 }
+
+

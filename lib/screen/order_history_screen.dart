@@ -92,7 +92,13 @@ class OrderHistoryScreen extends StatelessWidget {
 
               final type = data['type'] ?? 'normal';
               final clientName = data['clientName'] ?? 'Без имени';
-              final price = data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0;
+
+              // 🔹 ЛОГИКА ЦЕНЫ ДЛЯ ИСТОРИИ КУРЬЕРА:
+              // Если это обычная доставка — показываем доход курьера (deliveryPrice).
+              // Для остальных типов показываем общую стоимость заказа.
+              final displayPrice = (type == 'normal')
+                  ? (data['deliveryPrice'] ?? 0)
+                  : (data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0);
 
               final updatedAt = data['updatedAt'] as Timestamp?;
               final dateStr = updatedAt != null
@@ -141,7 +147,8 @@ class OrderHistoryScreen extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text('$price Руб', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+                              // 🔹 ОТОБРАЖАЕМ ВЫЧИСЛЕННУЮ ЦЕНУ
+                              Text('$displayPrice Руб', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Colors.black87)),
                               const SizedBox(height: 4),
                               Text(dateStr, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
                               const SizedBox(height: 8),
@@ -183,20 +190,13 @@ class OrderHistoryScreen extends StatelessWidget {
     final String userId = data['userId'] ?? '';
     final String orderId = doc.id;
 
-    // Определяем имя коллекции в зависимости от типа заказа
     String collectionName;
     switch (type) {
-      case 'city':
-        collectionName = 'cityOrders';
-        break;
-      case 'mejCity':
-        collectionName = 'intercityOrders';
-        break;
-      default:
-        collectionName = 'delivery_orders';
+      case 'city': collectionName = 'cityOrders'; break;
+      case 'mejCity': collectionName = 'intercityOrders'; break;
+      default: collectionName = 'delivery_orders';
     }
 
-    // Собираем правильную ссылку на документ клиента
     final orderRef = FirebaseFirestore.instance
         .collection('users')
         .doc(userId)

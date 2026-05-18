@@ -6,7 +6,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
-// Добавляем пакет для звонков
 import 'package:url_launcher/url_launcher.dart';
 
 // Фикс для SSL
@@ -44,13 +43,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     HttpOverrides.global = MyHttpOverrides();
   }
 
-  // Функция для совершения звонка
   Future<void> _makePhoneCall(String? phoneNumber) async {
     if (phoneNumber == null || phoneNumber.isEmpty) return;
-    final Uri launchUri = Uri(
-      scheme: 'tel',
-      path: phoneNumber,
-    );
+    final Uri launchUri = Uri(scheme: 'tel', path: phoneNumber);
     try {
       if (await canLaunchUrl(launchUri)) {
         await launchUrl(launchUri);
@@ -69,7 +64,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     'cancelled': 'Скрыт для вас',
   };
 
-  // --- ИСПРАВЛЕННАЯ ЛОГИКА ТРАНЗАКЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
   Future<void> _takeAction(String action) async {
     setState(() => loading = true);
     try {
@@ -93,16 +87,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         }
 
         if (action == 'accepted') {
-          if (existingCourierId.isNotEmpty) {
-            throw Exception('Вы уже приняли этот заказ');
-          }
+          if (existingCourierId.isNotEmpty) throw Exception('Вы уже приняли этот заказ');
           if (!['new', 'preparing', 'ready'].contains(freshData['status'])) {
             throw Exception('Заказ более недоступен для принятия');
           }
         }
 
         final actionTime = FieldValue.serverTimestamp();
-
         Map<String, dynamic> updateData = {
           'status': action,
           'courierId': widget.courierId,
@@ -124,10 +115,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               .collection('history')
               .doc(widget.orderRef.id);
 
-          transaction.set(courierHistoryRef, {
-            ...freshData,
-            ...updateData,
-          }, SetOptions(merge: true));
+          transaction.set(courierHistoryRef, {...freshData, ...updateData}, SetOptions(merge: true));
 
           if (shopId.isNotEmpty) {
             DocumentReference shopHistoryRef = FirebaseFirestore.instance
@@ -331,6 +319,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   Widget _buildClientInfoCard(Map<String, dynamic> data) {
     final String? clientPhone = data['clientPhone'];
+    final String type = data['type'] ?? 'normal';
+
+    // 🔹 ЛОГИКА ЦЕНЫ: Для обычных доставок показываем только заработок курьера
+    final displayPrice = (type == 'normal')
+        ? (data['deliveryPrice'] ?? 0)
+        : (data['total'] ?? data['totalPrice'] ?? 0);
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -354,7 +348,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ],
           ),
           const Divider(height: 20),
-          _infoRow(Icons.payment_outlined, 'СУММА', '${data['total'] ?? 0} Руб', isPrice: true),
+          // Отображаем цену (заработок курьера)
+          _infoRow(Icons.payment_outlined, type == 'normal' ? 'ВАШ ДОХОД' : 'СУММА', '$displayPrice Руб', isPrice: true),
         ],
       ),
     );
@@ -405,14 +400,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 child: const Text('Скрыть заказ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))
             ),
           ],
-
           if (assignedCourierId == widget.courierId) ...[
             if (status != 'inProgress')
               _actionBtn('НАЧАТЬ ДОСТАВКУ', Colors.orange, () => _takeAction('inProgress'))
             else
               _actionBtn('ЗАВЕРШИТЬ ДОСТАВКУ', Colors.green, () => _takeAction('delivered')),
           ],
-
           if (assignedCourierId.isNotEmpty && assignedCourierId != widget.courierId)
             const Text('Заказ взят другим курьером', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
         ],

@@ -30,7 +30,7 @@ android {
         applicationId = "com.example.courier_app"
 
         // minSdk 23 — это отлично, подходит для пушей
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

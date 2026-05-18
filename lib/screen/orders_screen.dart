@@ -112,10 +112,7 @@
 
 
     // ===================== Доставка =====================
-    // ===================== Доставка (Обновлено с таймером готовности) =====================
     Widget _buildDeliveryOrders() {
-      // 1. Формируем запрос: тянем заказы, которые готовятся, готовы или уже ПРИНЯТЫ.
-      // ВАЖНО: Если до этого accepted не было в whereIn, Firebase может попросить создать индекс (ссылка будет в логах).
       final ordersQuery = FirebaseFirestore.instance
           .collectionGroup('orders')
           .where('status', whereIn: ['ready', 'preparing', 'accepted'])
@@ -129,23 +126,13 @@
             return _buildEmptyState('Новых заказов пока нет');
           }
 
-          // 2. ФИЛЬТРАЦИЯ (Invisible Personalization):
-          // Мы убираем чужие заказы прямо в коде, чтобы курьеры не видели работу друг друга.
           final orders = snapshot.data!.docs.where((doc) {
             final data = doc.data() as Map<String, dynamic>;
             final String? orderCourierId = data['courierId'];
             final List<dynamic> rejectedBy = data['rejectedBy'] ?? [];
-
-            // Проверка 1: Ты не нажимал "Скрыть" на этот заказ
             bool isNotRejected = !rejectedBy.contains(widget.courierId);
-
-            // Проверка 2: У заказа нет владельца (пусто или null)
             bool isAvailable = orderCourierId == null || orderCourierId.isEmpty;
-
-            // Проверка 3: Владелец заказа — ТЫ
             bool isMine = orderCourierId == widget.courierId;
-
-            // Показываем если (не скрыт) И (свободен ИЛИ мой)
             return isNotRejected && (isAvailable || isMine);
           }).toList();
 
@@ -171,6 +158,11 @@
               final shopId = data['shopId'] ?? '';
               final restaurantName = data['restaurantName'] ?? 'Заведение';
 
+              // 🔹 ЛОГИКА ЦЕНЫ ДЛЯ КУРЬЕРА:
+              // Показываем только стоимость доставки (deliveryPrice).
+              // Если поля нет (старый заказ), показываем 0 или общую сумму как запасной вариант.
+              final deliveryEarn = data['deliveryPrice'] ?? 0;
+
               return FutureBuilder<String>(
                 future: _getClientName(data, userId),
                 builder: (context, nameSnapshot) {
@@ -181,13 +173,11 @@
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(20),
-                      // Если заказ мой — добавим легкую рамку для удобства
                       border: isMyOrder ? Border.all(color: Colors.deepOrange.withOpacity(0.5), width: 1.5) : null,
                       boxShadow: [
                         BoxShadow(
                           color: isMyOrder ? Colors.deepOrange.withOpacity(0.05) : Colors.black.withOpacity(0.04),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
+                          blurRadius: 10, offset: const Offset(0, 4),
                         ),
                       ],
                     ),
@@ -223,20 +213,15 @@
                                     ),
                                     child: Text(
                                       getShopLabelById(shopId).toUpperCase(),
-                                      style: const TextStyle(
-                                        color: Colors.orange,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 0.5,
-                                      ),
+                                      style: const TextStyle(color: Colors.orange, fontSize: 10, fontWeight: FontWeight.bold),
                                     ),
                                   ),
-                                  // Динамический статус
                                   _buildStatusBadge(status, estimatedReadyTime, time),
                                 ],
                               ),
                               const SizedBox(height: 14),
                               Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Expanded(
                                     child: Text(
@@ -244,8 +229,17 @@
                                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
                                     ),
                                   ),
-                                  if (isMyOrder)
-                                    const Icon(Icons.stars, color: Colors.deepOrange, size: 20),
+                                  // 🔹 ОТОБРАЖЕНИЕ ОПЛАТЫ КУРЬЕРУ
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        '$deliveryEarn Руб',
+                                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.green),
+                                      ),
+                                      const Text('доставка', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    ],
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 4),
@@ -268,17 +262,9 @@
                                   const Spacer(),
                                   Text(
                                     _getActionText(status, isMyOrder),
-                                    style: TextStyle(
-                                      color: _getStatusColor(status),
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
-                                    ),
+                                    style: TextStyle(color: _getStatusColor(status), fontWeight: FontWeight.bold, fontSize: 13),
                                   ),
-                                  Icon(
-                                      Icons.chevron_right_rounded,
-                                      color: _getStatusColor(status),
-                                      size: 20
-                                  ),
+                                  Icon(Icons.chevron_right_rounded, color: _getStatusColor(status), size: 20),
                                 ],
                               ),
                             ],

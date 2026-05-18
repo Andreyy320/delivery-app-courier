@@ -67,12 +67,16 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
               final data = doc.data() as Map<String, dynamic>;
 
               // Определяем данные для карточки
-              final type = (data['type'] ?? 'orders').toString();
+              final type = (data['type'] ?? 'normal').toString();
               final status = data['status'] ?? '';
-              final price = data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0;
               final clientName = data['clientName'] ?? 'Без имени';
 
-              return _buildOrderCard(context, doc, type, status, price, clientName);
+              // 🔹 ЛОГИКА ЦЕНЫ: Если обычная доставка — выводим доход курьера
+              final displayPrice = (type == 'normal' || type == 'orders')
+                  ? (data['deliveryPrice'] ?? 0)
+                  : (data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0);
+
+              return _buildOrderCard(context, doc, type, status, displayPrice, clientName);
             },
           );
         },
@@ -133,7 +137,7 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
   void _navigateToDetail(BuildContext context, String type, DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     final String userId = data['userId'] ?? '';
-    final String orderId = data['orderId'] ?? doc.id;
+    final String orderId = doc.id;
 
     if (userId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -145,40 +149,41 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
     String collectionName;
     final String t = type.toLowerCase().trim();
 
-    // ВАЖНО: Названия коллекций должны ТОЧНО совпадать с теми, что в Firebase (регистр!)
     if (t == 'city') {
       collectionName = 'cityOrders';
     } else if (t == 'mejcity') {
-      collectionName = 'mejCityOrders';
+      collectionName = 'intercityOrders';
     } else if (t == 'express' || t == 'delivery') {
       collectionName = 'delivery_orders';
     } else {
-      collectionName = 'orders';
+      collectionName = 'delivery_orders'; // Для обычных заказов
     }
 
-    // Ссылка на оригинал заказа в ветке пользователя
     final orderRef = FirebaseFirestore.instance
         .collection('users')
         .doc(userId)
         .collection(collectionName)
         .doc(orderId);
 
-    debugPrint("DEBUG: Путь к заказу: users/$userId/$collectionName/$orderId");
-
     Widget screen;
-    // Используем collectionName для выбора нужного экрана
     switch (collectionName) {
       case 'cityOrders':
         screen = GorodOrderDetailScreen(
             orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
         break;
-      case 'mejCityOrders':
+      case 'intercityOrders':
         screen = IntercityOrderDetailScreen(
             orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
         break;
       case 'delivery_orders':
-        screen = SrokOrderDetailScreen(
-            orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
+      // Здесь решаем, обычный экран или для срочных (если логика разная)
+        if (t == 'express' || t == 'delivery') {
+          screen = SrokOrderDetailScreen(
+              orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
+        } else {
+          screen = CourierOrderDetailScreen(
+              orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
+        }
         break;
       default:
         screen = CourierOrderDetailScreen(
@@ -217,7 +222,7 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
         color = Colors.teal;
         break;
       case 'express':
-      case 'delivery_orders':
+      case 'delivery':
         icon = Icons.bolt_rounded;
         color = Colors.orange;
         break;
