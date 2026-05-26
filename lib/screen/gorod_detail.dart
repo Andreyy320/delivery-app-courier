@@ -6,7 +6,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
-// Добавляем пакет для работы со звонками
 import 'package:url_launcher/url_launcher.dart';
 
 class MyHttpOverrides extends HttpOverrides {
@@ -43,34 +42,28 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
     HttpOverrides.global = MyHttpOverrides();
   }
 
-  // Функция для совершения звонка
   Future<void> _makePhoneCall(String? phoneNumber) async {
     if (phoneNumber == null || phoneNumber.isEmpty) return;
-    final Uri launchUri = Uri(
-      scheme: 'tel',
-      path: phoneNumber,
-    );
+    final Uri launchUri = Uri(scheme: 'tel', path: phoneNumber);
     try {
       if (await canLaunchUrl(launchUri)) {
         await launchUrl(launchUri);
       }
     } catch (e) {
-      debugPrint('Ошибка при попытке позвонить: $e');
+      debugPrint('Ошибка при звонке: $e');
     }
   }
 
-  // --- ЛОГИКА ОБНОВЛЕНИЯ СТАТУСОВ (В 3 МЕСТАХ) ---
-  Future<void> _takeAction(String action, Map<String, dynamic> data) async {
+  Future<void> _takeAction(String action) async {
     setState(() => loading = true);
     try {
-      final userId = data['userId'];
-      if (userId == null) throw Exception('ID пользователя не найден');
-
       await FirebaseFirestore.instance.runTransaction((transaction) async {
         DocumentSnapshot freshSnap = await transaction.get(widget.orderRef);
         if (!freshSnap.exists) throw Exception('Заказ не найден');
 
         final freshData = freshSnap.data() as Map<String, dynamic>;
+        final userId = freshData['userId'];
+        if (userId == null) throw Exception('ID пользователя не найден');
 
         if (action == 'accepted' && freshData['status'] != 'new') {
           throw Exception('Этот заказ уже взял другой курьер!');
@@ -98,10 +91,10 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
         DocumentReference clientOrderRef = FirebaseFirestore.instance
             .collection('users')
             .doc(userId)
-            .collection('cityOrders')
+            .collection('cityOrders') // Изменено под городские заказы
             .doc(widget.orderRef.id);
 
-        transaction.set(clientOrderRef, updateData, SetOptions(merge: true));
+        transaction.update(clientOrderRef, updateData);
 
         if (['accepted', 'inProgress', 'delivered'].contains(action)) {
           DocumentReference historyRef = FirebaseFirestore.instance
@@ -113,7 +106,7 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
           transaction.set(historyRef, {
             ...freshData,
             ...updateData,
-            'type': 'city',
+            'type': 'city', // Изменено под городские заказы
             'actionAt': actionTime,
           }, SetOptions(merge: true));
         }
@@ -131,12 +124,11 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
       }
     } catch (e) {
       if (mounted) {
-        String errorMessage = e.toString().contains('уже взял другой')
+        String errorText = e.toString().contains('уже взял другой')
             ? 'Этот заказ уже занят!'
             : 'Ошибка: $e';
-
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(errorMessage), backgroundColor: Colors.red)
+            SnackBar(content: Text(errorText), backgroundColor: Colors.red)
         );
       }
     } finally {
@@ -155,33 +147,67 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
     }
   }
 
-  // --- ЛОГИКА НАВИГАЦИИ НА КАРТУ ---
   Future<void> _handleMapNavigation(Map<String, dynamic> orderData) async {
     setState(() => mapLoading = true);
     try {
-      final pickup = orderData['pickup'] as Map<String, dynamic>?;
-      final dropoff = orderData['dropoff'] as Map<String, dynamic>?;
+      double? startLat;
+      double? startLng;
+      double? endLat;
+      double? endLng;
 
-      if (dropoff != null && pickup != null) {
-        double startLat = (pickup['lat'] as num).toDouble();
-        double startLng = (pickup['lng'] as num).toDouble();
-        double endLat = (dropoff['lat'] as num).toDouble();
-        double endLng = (dropoff['lng'] as num).toDouble();
+      // 1. Проверяем поле pickup (может быть GeoPoint или Map)
+      final pickupData = orderData['pickup'];
+      if (pickupData != null) {
+        if (pickupData is GeoPoint) {
+          startLat = pickupData.latitude;
+          startLng = pickupData.longitude;
+        } else if (pickupData is Map) {
+          startLat = (pickupData['lat'] as num?)?.toDouble();
+          startLng = (pickupData['lng'] as num?)?.toDouble();
+        }
+      }
 
+      // 2. Проверяем поле dropoff (может быть GeoPoint или Map)
+      final dropoffData = orderData['dropoff'];
+      if (dropoffData != null) {
+        if (dropoffData is GeoPoint) {
+          endLat = dropoffData.latitude;
+          endLng = dropoffData.longitude;
+        } else if (dropoffData is Map) {
+          endLat = (dropoffData['lat'] as num?)?.toDouble();
+          endLng = (dropoffData['lng'] as num?)?.toDouble();
+        }
+      }
+
+      // 3. Если всё ещё пусто, на всякий случай проверяем плоские поля в корне документа
+      startLat ??= (orderData['startLat'] as num?)?.toDouble() ?? (orderData['pickupLat'] as num?)?.toDouble();
+      startLng ??= (orderData['startLng'] as num?)?.toDouble() ?? (orderData['pickupLng'] as num?)?.toDouble();
+      endLat ??= (orderData['endLat'] as num?)?.toDouble() ?? (orderData['dropoffLat'] as num?)?.toDouble();
+      endLng ??= (orderData['endLng'] as num?)?.toDouble() ?? (orderData['dropoffLng'] as num?)?.toDouble();
+
+      // Проверяем результат и переходим на карту
+      if (startLat != null && startLng != null && endLat != null && endLng != null) {
         if (!mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => GorodMapScreen(
-              targetLocation: LatLng(endLat, endLng),
+              startLocation: LatLng(startLat!, startLng!),
+              targetLocation: LatLng(endLat!, endLng!),
               clientName: orderData['clientName'] ?? 'Клиент',
-              startLocation: LatLng(startLat, startLng),
             ),
           ),
         );
+      } else {
+        throw Exception('Координаты не найдены. Проверьте поля pickup/dropoff в Firestore.');
       }
     } catch (e) {
       debugPrint("Ошибка навигации: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка открытия карты: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => mapLoading = false);
     }
@@ -190,9 +216,9 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
+      backgroundColor: const Color(0xFFF4F7FA),
       appBar: AppBar(
-        title: const Text('ГОРОДСКОЙ ЗАКАЗ', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.0, fontSize: 14)),
+        title: const Text('ГОРОДСКОЙ ЗАКАЗ', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2, fontSize: 14)),
         centerTitle: true,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
@@ -214,18 +240,19 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   child: Column(
                     children: [
-                      _buildMainCard(data),
+                      _buildMainStatusCard(data),
                       const SizedBox(height: 16),
-                      _buildClientInfoCard(data, status),
+                      _buildInfoSection(data, status),
                       const SizedBox(height: 16),
-                      _buildRouteTimeline(data),
+                      _buildAddressTimeline(data),
                       const SizedBox(height: 16),
                       _buildTimelineCard(data),
+                      const SizedBox(height: 30),
                     ],
                   ),
                 ),
               ),
-              _buildBottomActionPanel(status, data),
+              _buildBottomPanel(status, data),
             ],
           );
         },
@@ -233,39 +260,53 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
     );
   }
 
-  Widget _buildMainCard(Map<String, dynamic> data) {
+  Widget _buildMainStatusCard(Map<String, dynamic> data) {
     return Container(
-      padding: const EdgeInsets.all(20), // Слегка уменьшили паддинг для экономии места
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(30),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 20)],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 10))],
       ),
       child: Column(
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              const Expanded( // Теперь текст занимает всё свободное место и не выталкивает цену
-                child: Text(
-                  'Городская доставка',
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'ЗАКАЗ #${widget.orderRef.id.substring(0, 6).toUpperCase()}',
+                      style: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.bold, fontSize: 11, letterSpacing: 0.5),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Городская доставка',
+                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Container( // Оптимизированная рамка для цены
+              const SizedBox(width: 10),
+              Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(12)),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Text(
-                  '${data['totalPrice'] ?? 0} Руб',
+                  '${data['totalCost'] ?? data['totalPrice'] ?? 0} Руб',
                   style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.w900, fontSize: 16),
                 ),
               )
             ],
           ),
-          const Divider(height: 30),
+          const Padding(padding: EdgeInsets.symmetric(vertical: 15), child: Divider()),
           SizedBox(
             width: double.infinity,
             height: 54,
@@ -273,8 +314,8 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
               onPressed: mapLoading ? null : () => _handleMapNavigation(data),
               icon: mapLoading
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Icon(Icons.map_outlined, size: 20),
-              label: const Text('ОТКРЫТЬ НАВИГАТОР', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                  : const Icon(Icons.directions_outlined, size: 20),
+              label: const Text('ОТКРЫТЬ НАВИГАТОР', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.5, fontSize: 13)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
@@ -288,21 +329,20 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
     );
   }
 
-  Widget _buildClientInfoCard(Map<String, dynamic> data, String status) {
+  Widget _buildInfoSection(Map<String, dynamic> data, String status) {
     final String? phone = data['clientPhone'];
-    final bool isAccepted = status != 'new' && status != 'cancelled';
+    final bool canCall = status != 'new' && status != 'cancelled';
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _infoTile(Icons.person_outline, 'КЛИЕНТ', data['clientName'] ?? '-'),
-          const SizedBox(height: 12),
-          _infoTile(Icons.phone_outlined, 'ТЕЛЕФОН', phone ?? '-'),
+          _modernInfoRow(Icons.person_outline, 'КЛИЕНТ', data['clientName'] ?? 'Не указан'),
+          const SizedBox(height: 16),
+          _modernInfoRow(Icons.phone_outlined, 'КОНТАКТ', phone ?? 'Нет номера'),
 
-          if (isAccepted && phone != null && phone.isNotEmpty) ...[
+          if (canCall && phone != null && phone.isNotEmpty) ...[
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -312,43 +352,32 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
                 icon: const Icon(Icons.call, size: 20),
                 label: const Text('ПОЗВОНИТЬ КЛИЕНТУ', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.green[700],
-                  side: BorderSide(color: Colors.green[700]!, width: 1.5),
+                  foregroundColor: Colors.orange[900],
+                  side: BorderSide(color: Colors.orange[900]!, width: 1.5),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                 ),
               ),
             ),
           ],
-
-          if (data['comment']?.isNotEmpty == true) ...[
-            const Divider(height: 24),
-            _infoTile(Icons.chat_bubble_outline, 'КОММЕНТАРИЙ', data['comment']),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (data['bodySize'] != null) _tagChip('Кузов: ${data['bodySize']}'),
-              if (data['loaders'] != null) _tagChip('Грузчики: ${data['loaders']}'),
-              if (data['escort'] != null) _tagChip('Сопровождение: ${data['escort']}'),
-            ],
-          ),
         ],
       ),
     );
   }
 
-  Widget _infoTile(IconData icon, String label, String value) {
+  Widget _modernInfoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 20, color: Colors.orange[700]),
-        const SizedBox(width: 12),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
+          child: Icon(icon, size: 20, color: Colors.black87),
+        ),
+        const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10, fontWeight: FontWeight.bold)),
+              Text(label, style: TextStyle(color: Colors.grey[400], fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
               Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
             ],
           ),
@@ -357,39 +386,38 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
     );
   }
 
-  Widget _tagChip(String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(8)),
-      child: Text(label, style: TextStyle(color: Colors.orange[900], fontSize: 11, fontWeight: FontWeight.bold)),
-    );
-  }
-
-  Widget _buildRouteTimeline(Map<String, dynamic> data) {
+  Widget _buildAddressTimeline(Map<String, dynamic> data) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
       child: Column(
         children: [
-          _routePoint(Icons.circle, Colors.orange, 'ОТКУДА', data['fromAddress'] ?? 'По координатам'),
-          Container(margin: const EdgeInsets.only(left: 10), height: 25, width: 2, color: Colors.grey[100]),
-          _routePoint(Icons.location_on, Colors.red, 'КУДА', data['toAddress'] ?? 'По координатам'),
+          _addressItem(Icons.circle, Colors.green, 'ТОЧКА ЗАБОРА', data['fromAddress'] ?? 'Забрать посылку по координатам'),
+          Container(
+            margin: const EdgeInsets.only(left: 11),
+            height: 30,
+            width: 2,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.green, Colors.orange[900]!]),
+            ),
+          ),
+          _addressItem(Icons.location_on, Colors.orange[900]!, 'ТОЧКА ДОСТАВКИ', data['toAddress'] ?? 'Доставить клиенту'),
         ],
       ),
     );
   }
 
-  Widget _routePoint(IconData icon, Color color, String title, String sub) {
+  Widget _addressItem(IconData icon, Color color, String title, String sub) {
     return Row(
       children: [
-        Icon(icon, color: color, size: 20),
+        Icon(icon, color: color, size: 22),
         const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 10, color: Colors.grey)),
-              Text(sub, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 0.5)),
+              Text(sub, style: TextStyle(color: Colors.grey[500], fontSize: 12), maxLines: 1, overflow: TextOverflow.ellipsis),
             ],
           ),
         )
@@ -402,73 +430,102 @@ class _GorodOrderDetailScreenState extends State<GorodOrderDetailScreen> {
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _statusStep('Принят', data['acceptedAt']),
-          _statusStep('В пути', data['inProgressAt']),
-          _statusStep('Доставлен', data['deliveredAt'], isLast: true),
+          const Text('СТАТУС ВЫПОЛНЕНИЯ', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 1, color: Colors.grey)),
+          const SizedBox(height: 20),
+          _modernStatusStep('Заказ принят', data['acceptedAt']),
+          _modernStatusStep('Курьер в пути', data['inProgressAt']),
+          _modernStatusStep('Доставлено клиенту', data['deliveredAt'], isLast: true),
         ],
       ),
     );
   }
 
-  Widget _statusStep(String title, dynamic time, {bool isLast = false}) {
-    bool done = time != null;
-    return Row(
-      children: [
-        Column(
-          children: [
-            Icon(done ? Icons.check_circle : Icons.radio_button_off, size: 18, color: done ? Colors.green : Colors.grey[200]),
-            if (!isLast) Container(width: 2, height: 20, color: Colors.grey[100]),
-          ],
-        ),
-        const SizedBox(width: 16),
-        Text(title, style: TextStyle(color: done ? Colors.black : Colors.grey, fontWeight: done ? FontWeight.bold : FontWeight.normal)),
-        const Spacer(),
-        if (done) Text(DateFormat('HH:mm').format((time as Timestamp).toDate()), style: const TextStyle(fontSize: 11, color: Colors.grey)),
-      ],
+  Widget _modernStatusStep(String title, dynamic time, {bool isLast = false}) {
+    bool isDone = time != null;
+    return IntrinsicHeight(
+      child: Row(
+        children: [
+          Column(
+            children: [
+              Icon(isDone ? Icons.check_circle : Icons.radio_button_off, size: 18, color: isDone ? Colors.green : Colors.grey[200]),
+              if (!isLast) Expanded(child: Container(width: 2, color: isDone ? Colors.green : Colors.grey[100])),
+            ],
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(title, style: TextStyle(fontSize: 13, fontWeight: isDone ? FontWeight.bold : FontWeight.normal, color: isDone ? Colors.black : Colors.grey)),
+                  if (isDone) Text(DateFormat('HH:mm').format((time as Timestamp).toDate()), style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                ],
+              ),
+            ),
+          )
+        ],
+      ),
     );
   }
 
-  Widget _buildBottomActionPanel(String status, Map<String, dynamic> data) {
+  Widget _buildBottomPanel(String status, Map<String, dynamic> data) {
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(35))),
-      child: _buildActionButton(status, data),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(35)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, -5))],
+      ),
+      child: _buildActionButton(status),
     );
   }
 
-  Widget _buildActionButton(String status, Map<String, dynamic> data) {
+  Widget _buildActionButton(String status) {
     if (status == 'delivered') {
       return Container(
-        height: 60, width: double.infinity,
+        height: 60,
+        width: double.infinity,
         decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(18)),
-        child: const Center(child: Text('✅ ВЫПОЛНЕНО', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w900))),
+        child: const Center(child: Text('✅ ДОСТАВЛЕНО', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w900))),
       );
     }
 
-    String text = ''; Color color = Colors.orange[700]!; String nextStatus = '';
-    if (status == 'new') { text = 'ПРИНЯТЬ ЗАКАЗ'; nextStatus = 'accepted'; }
-    else if (status == 'accepted') { text = 'НАЧАТЬ ПУТЬ'; color = Colors.blue; nextStatus = 'inProgress'; }
-    else if (status == 'inProgress') { text = 'ЗАВЕРШИТЬ ДОСТАВКУ'; color = Colors.green[700]!; nextStatus = 'delivered'; }
+    String text = '';
+    Color color = Colors.black;
+    String nextStatus = '';
+
+    if (status == 'new') { text = 'ПРИНЯТЬ ЗАКАЗ'; color = Colors.orange[900]!; nextStatus = 'accepted'; }
+    else if (status == 'accepted') { text = 'НАЧАТЬ ПУТЬ'; color = Colors.orange[800]!; nextStatus = 'inProgress'; }
+    else if (status == 'inProgress') { text = 'ПОДТВЕРДИТЬ ДОСТАВКУ'; color = Colors.green[700]!; nextStatus = 'delivered'; }
 
     return SizedBox(
-      width: double.infinity, height: 65,
+      width: double.infinity,
+      height: 65,
       child: ElevatedButton(
-        onPressed: loading ? null : () => _takeAction(nextStatus, data),
-        style: ElevatedButton.styleFrom(backgroundColor: color, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)), elevation: 0),
-        child: loading ? const CircularProgressIndicator(color: Colors.white) : Text(text, style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white)),
+        onPressed: loading ? null : () => _takeAction(nextStatus),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 0,
+        ),
+        child: loading
+            ? const CircularProgressIndicator(color: Colors.white)
+            : Text(text, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, letterSpacing: 1)),
       ),
     );
   }
 }
 
-// --- ЭКРАН КАРТЫ (OSM + ROUTING) ---
 class GorodMapScreen extends StatefulWidget {
   final LatLng targetLocation;
   final String clientName;
-  final LatLng startLocation;
+  final LatLng? startLocation;
 
-  const GorodMapScreen({super.key, required this.targetLocation, required this.clientName, required this.startLocation});
+  const GorodMapScreen({super.key, required this.targetLocation, required this.clientName, this.startLocation});
 
   @override
   State<GorodMapScreen> createState() => _GorodMapScreenState();
@@ -483,41 +540,62 @@ class _GorodMapScreenState extends State<GorodMapScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _buildRoute());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _buildRouteWorkflow());
   }
 
-  Future<void> _buildRoute() async {
+  Future<void> _buildRouteWorkflow() async {
+    if (widget.startLocation == null) {
+      _fitMarkers();
+      return;
+    }
     setState(() => isLoadingRoute = true);
-    bool success = await _fetchORS();
-    if (!success) await _fetchOSRM();
+    bool success = await _getRouteFromORS();
+    if (!success) await _getRouteFromOSRM();
     if (mounted) {
       setState(() => isLoadingRoute = false);
-      _mapController.fitCamera(CameraFit.bounds(bounds: LatLngBounds.fromPoints([widget.startLocation, widget.targetLocation]), padding: const EdgeInsets.all(80)));
+      _fitMarkers();
     }
   }
 
-  Future<bool> _fetchORS() async {
-    final url = 'https://api.openrouteservice.org/v2/directions/driving-car?api_key=$orsKey&start=${widget.startLocation.longitude},${widget.startLocation.latitude}&end=${widget.targetLocation.longitude},${widget.targetLocation.latitude}';
+  Future<bool> _getRouteFromORS() async {
+    final url = 'https://api.openrouteservice.org/v2/directions/driving-car'
+        '?api_key=$orsKey'
+        '&start=${widget.startLocation!.longitude},${widget.startLocation!.latitude}'
+        '&end=${widget.targetLocation.longitude},${widget.targetLocation.latitude}';
     try {
-      final r = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 8));
-      if (r.statusCode == 200) {
-        final coords = json.decode(r.body)['features'][0]['geometry']['coordinates'] as List;
-        setState(() => routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList());
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final coords = data['features'][0]['geometry']['coordinates'] as List;
+        setState(() {
+          routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList();
+        });
         return true;
       }
       return false;
     } catch (e) { return false; }
   }
 
-  Future<void> _fetchOSRM() async {
-    final url = 'https://router.project-osrm.org/route/v1/driving/${widget.startLocation.longitude},${widget.startLocation.latitude};${widget.targetLocation.longitude},${widget.targetLocation.latitude}?overview=full&geometries=geojson';
+  Future<void> _getRouteFromOSRM() async {
+    final url = 'https://router.project-osrm.org/route/v1/driving/'
+        '${widget.startLocation!.longitude},${widget.startLocation!.latitude};'
+        '${widget.targetLocation.longitude},${widget.targetLocation.latitude}'
+        '?overview=full&geometries=geojson';
     try {
-      final r = await http.get(Uri.parse(url));
-      if (r.statusCode == 200) {
-        final coords = json.decode(r.body)['routes'][0]['geometry']['coordinates'] as List;
-        setState(() => routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList());
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final coords = data['routes'][0]['geometry']['coordinates'] as List;
+        setState(() {
+          routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList();
+        });
       }
     } catch (e) { debugPrint('$e'); }
+  }
+
+  void _fitMarkers() {
+    List<LatLng> points = routePoints.isNotEmpty ? routePoints : [widget.targetLocation, if(widget.startLocation != null) widget.startLocation!];
+    _mapController.fitCamera(CameraFit.bounds(bounds: LatLngBounds.fromPoints(points), padding: const EdgeInsets.all(80)));
   }
 
   @override
@@ -530,15 +608,27 @@ class _GorodMapScreenState extends State<GorodMapScreen> {
             mapController: _mapController,
             options: MapOptions(initialCenter: widget.targetLocation, initialZoom: 14),
             children: [
-              TileLayer(urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', subdomains: const ['a', 'b', 'c', 'd']),
-              if (routePoints.isNotEmpty) PolylineLayer(polylines: [Polyline(points: routePoints, color: Colors.orange, strokeWidth: 5.0)]),
-              MarkerLayer(markers: [
-                Marker(point: widget.startLocation, child: const Icon(Icons.location_on, color: Colors.orange, size: 35)),
-                Marker(point: widget.targetLocation, child: const Icon(Icons.flag_circle, color: Colors.red, size: 40)),
-              ]),
+              TileLayer(
+                  urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                  subdomains: const ['a', 'b', 'c', 'd']
+              ),
+              if (routePoints.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(points: routePoints, color: Colors.white, strokeWidth: 8.0),
+                    Polyline(points: routePoints, color: Colors.orangeAccent, strokeWidth: 5.0),
+                  ],
+                ),
+              MarkerLayer(
+                markers: [
+                  if (widget.startLocation != null)
+                    Marker(point: widget.startLocation!, child: const Icon(Icons.location_on, color: Colors.orange, size: 35)),
+                  Marker(point: widget.targetLocation, child: const Icon(Icons.flag_circle, color: Colors.redAccent, size: 40)),
+                ],
+              ),
             ],
           ),
-          if (isLoadingRoute) const Center(child: CircularProgressIndicator(color: Colors.orange)),
+          if (isLoadingRoute) const Center(child: CircularProgressIndicator(color: Colors.orangeAccent)),
         ],
       ),
     );

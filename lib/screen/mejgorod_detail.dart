@@ -6,7 +6,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
-// Добавляем пакет для работы со звонками
 import 'package:url_launcher/url_launcher.dart';
 
 class MyHttpOverrides extends HttpOverrides {
@@ -43,7 +42,6 @@ class _IntercityOrderDetailScreenState extends State<IntercityOrderDetailScreen>
     HttpOverrides.global = MyHttpOverrides();
   }
 
-  // Функция для совершения звонка
   Future<void> _makePhoneCall(String? phoneNumber) async {
     if (phoneNumber == null || phoneNumber.isEmpty) return;
     final Uri launchUri = Uri(
@@ -155,32 +153,68 @@ class _IntercityOrderDetailScreenState extends State<IntercityOrderDetailScreen>
     }
   }
 
+  // --- ИСПРАВЛЕННЫЙ МЕТОД: ЗАЩИТА ОТ КРАША ТИПА GEOPOINT И MAP ---
   Future<void> _handleMapNavigation(Map<String, dynamic> orderData) async {
     setState(() => mapLoading = true);
     try {
-      final pickup = orderData['pickup'] as Map<String, dynamic>?;
-      final dropoff = orderData['dropoff'] as Map<String, dynamic>?;
+      double? startLat;
+      double? startLng;
+      double? endLat;
+      double? endLng;
 
-      if (dropoff != null && pickup != null) {
-        double startLat = (pickup['lat'] as num).toDouble();
-        double startLng = (pickup['lng'] as num).toDouble();
-        double endLat = (dropoff['lat'] as num).toDouble();
-        double endLng = (dropoff['lng'] as num).toDouble();
+      // 1. Извлекаем pickup (обрабатываем и GeoPoint, и Map)
+      final pickupData = orderData['pickup'];
+      if (pickupData != null) {
+        if (pickupData is GeoPoint) {
+          startLat = pickupData.latitude;
+          startLng = pickupData.longitude;
+        } else if (pickupData is Map) {
+          startLat = (pickupData['lat'] as num?)?.toDouble();
+          startLng = (pickupData['lng'] as num?)?.toDouble();
+        }
+      }
 
+      // 2. Извлекаем dropoff (обрабатываем и GeoPoint, и Map)
+      final dropoffData = orderData['dropoff'];
+      if (dropoffData != null) {
+        if (dropoffData is GeoPoint) {
+          endLat = dropoffData.latitude;
+          endLng = dropoffData.longitude;
+        } else if (dropoffData is Map) {
+          endLat = (dropoffData['lat'] as num?)?.toDouble();
+          endLng = (dropoffData['lng'] as num?)?.toDouble();
+        }
+      }
+
+      // 3. Запасной вариант: проверяем плоские поля в корне документа
+      startLat ??= (orderData['startLat'] as num?)?.toDouble() ?? (orderData['pickupLat'] as num?)?.toDouble();
+      startLng ??= (orderData['startLng'] as num?)?.toDouble() ?? (orderData['pickupLng'] as num?)?.toDouble();
+      endLat ??= (orderData['endLat'] as num?)?.toDouble() ?? (orderData['dropoffLat'] as num?)?.toDouble();
+      endLng ??= (orderData['endLng'] as num?)?.toDouble() ?? (orderData['dropoffLng'] as num?)?.toDouble();
+
+      // Строим маршрут только если нашли обе точки
+      if (startLat != null && startLng != null && endLat != null && endLng != null) {
         if (!mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => IntercityMapScreen(
-              targetLocation: LatLng(endLat, endLng),
+              startLocation: LatLng(startLat!, startLng!),
+              targetLocation: LatLng(endLat!, endLng!),
               clientName: orderData['clientName'] ?? 'Клиент',
-              startLocation: LatLng(startLat, startLng),
             ),
           ),
         );
+      } else {
+        throw Exception('Координаты маршрута "Откуда/Куда" не найдены в заказе.');
       }
     } catch (e) {
       debugPrint("Ошибка навигации: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка открытия карты: $e'), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => mapLoading = false);
     }
@@ -215,7 +249,7 @@ class _IntercityOrderDetailScreenState extends State<IntercityOrderDetailScreen>
                     children: [
                       _buildMainCard(data),
                       const SizedBox(height: 16),
-                      _buildClientInfoCard(data, status), // Передаем статус
+                      _buildClientInfoCard(data, status),
                       const SizedBox(height: 16),
                       _buildRouteTimeline(data),
                       const SizedBox(height: 16),
@@ -448,12 +482,18 @@ class _IntercityOrderDetailScreenState extends State<IntercityOrderDetailScreen>
   }
 }
 
+// --- КЛАСС КАРТЫ С ОБНОВЛЕННЫМ ДИНАМИЧЕСКИМ ИМЕНЕМ ПАРАМЕТРА (startLocation ОБЯЗАТЕЛЕН) ---
 class IntercityMapScreen extends StatefulWidget {
   final LatLng targetLocation;
   final String clientName;
   final LatLng startLocation;
 
-  const IntercityMapScreen({super.key, required this.targetLocation, required this.clientName, required this.startLocation});
+  const IntercityMapScreen({
+    super.key,
+    required this.targetLocation,
+    required this.clientName,
+    required this.startLocation,
+  });
 
   @override
   State<IntercityMapScreen> createState() => _IntercityMapScreenState();
@@ -519,7 +559,12 @@ class _IntercityMapScreenState extends State<IntercityMapScreen> {
             options: MapOptions(initialCenter: widget.targetLocation, initialZoom: 14),
             children: [
               TileLayer(urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', subdomains: const ['a', 'b', 'c', 'd']),
-              if (routePoints.isNotEmpty) PolylineLayer(polylines: [Polyline(points: routePoints, color: Colors.indigo, strokeWidth: 5.0)]),
+              if (routePoints.isNotEmpty)
+                PolylineLayer(
+                    polylines: [
+                      Polyline(points: routePoints, color: Colors.indigo, strokeWidth: 5.0)
+                    ]
+                ),
               MarkerLayer(markers: [
                 Marker(point: widget.startLocation, child: const Icon(Icons.location_on, color: Colors.indigo, size: 35)),
                 Marker(point: widget.targetLocation, child: const Icon(Icons.flag_circle, color: Colors.red, size: 40)),
