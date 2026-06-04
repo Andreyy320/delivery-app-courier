@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:courier_app/screen/notification_service.dart'; // Убедись, что путь верный
+import 'package:courier_app/screen/offline_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'; // 🔹 Добавлено для проверки интернета
 import 'firebase_options.dart';
 import 'screen/login_screen.dart';
 
@@ -39,6 +41,11 @@ class CourierApp extends StatefulWidget {
 
 class _CourierAppState extends State<CourierApp> {
   DateTime? _appStartTime;
+
+  // 🛠️ ТЕСТОВЫЙ ТУМБЛЕР ДЛЯ ЭМУЛЯТОРА КУРЬЕРА:
+  // Поставь true — чтобы принудительно протестировать экран "Нет интернета"
+  // Поставь false — для реальной работы сети
+  static const bool testOfflineMode = false;
 
   @override
   void initState() {
@@ -161,9 +168,38 @@ class _CourierAppState extends State<CourierApp> {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: LoginScreen(),
+      // 🔹 ДОБАВЛЕН ГЛОБАЛЬНЫЙ ПЕРЕХВАТЧИК СЕТИ ДЛЯ КУРЬЕРА
+      builder: (context, child) {
+        return StreamBuilder<List<ConnectivityResult>>(
+          stream: Connectivity().onConnectivityChanged,
+          builder: (context, snapshot) {
+            print("=== СТАТУС СЕТИ КУРЬЕРА: ${snapshot.data} ===");
+
+            // 1. Ждем инициализации потока при первом старте
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return child ?? const SizedBox.shrink();
+            }
+
+            // Проверка тумблера искусственного офлайна для эмулятора
+            final connectivity = testOfflineMode
+                ? <ConnectivityResult>[ConnectivityResult.none]
+                : snapshot.data;
+
+            // 2. Если интернета нет — блокируем экраном офлайна
+            if (connectivity == null ||
+                connectivity.isEmpty ||
+                connectivity.contains(ConnectivityResult.none)) {
+              return const OfflineScreen();
+            }
+
+            // 3. Если всё в порядке — показываем рабочую область курьера
+            return child!;
+          },
+        );
+      },
+      home: const LoginScreen(),
     );
   }
 }
