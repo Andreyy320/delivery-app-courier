@@ -340,6 +340,12 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
 
   Widget _buildItemsCard(Map<String, dynamic> data) {
     final items = data['items'] as List<dynamic>? ?? [];
+
+    // Получаем раздельные цены из твоей структуры Firestore
+    final double itemsPrice = double.tryParse(data['itemsPrice']?.toString() ?? '') ?? 0.0;
+    final double deliveryPrice = double.tryParse(data['deliveryPrice']?.toString() ?? '') ?? 0.0;
+    final double total = double.tryParse(data['total']?.toString() ?? '') ?? 0.0;
+
     return _cardWrapper(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -361,19 +367,48 @@ class _CourierOrderDetailScreenState extends State<CourierOrderDetailScreen> {
               ],
             ),
           )).toList(),
+
           const Padding(padding: EdgeInsets.symmetric(vertical: 10), child: Divider()),
+
+          // 🔹 Стоимость только товаров
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Стоимость товаров', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+              Text('${itemsPrice.toStringAsFixed(0)} Руб', style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // 🔹 Стоимость доставки (показываем, только если она больше 0)
+          if (deliveryPrice > 0) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Доставка', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+                Text('${deliveryPrice.toStringAsFixed(0)} Руб', style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Divider()),
+
+          // 🔹 Итоговый блок (Общая сумма)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text('ИТОГО', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-              Text('${data['total'] ?? 0} Руб', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: primaryColor)),
+              Text(
+                  '${total.toStringAsFixed(0)} Руб',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: primaryColor)
+              ),
             ],
           ),
         ],
       ),
     );
   }
-
   Widget _buildTimelineCard(Map<String, dynamic> data) {
     return _cardWrapper(
       child: Column(
