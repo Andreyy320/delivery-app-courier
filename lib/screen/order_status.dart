@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 // Твои импорты экранов деталей
-import 'active_detail.dart'; // Предположим, тут CourierOrderDetailScreen
-import 'gorod_detail.dart';
-import 'mejgorod_detail.dart';
-import 'srok_detail.dart';
+import 'detail_screen/active_detail.dart'; // Предположим, тут CourierOrderDetailScreen
+import 'NO_USED_SCREEN/gorod_detail.dart';
+import 'NO_USED_SCREEN/mejgorod_detail.dart';
+import 'detail_screen/srok_detail.dart';
 
 class OrdersStatusScreen extends StatefulWidget {
   final String courierId;
@@ -72,9 +72,13 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
               final clientName = data['clientName'] ?? 'Без имени';
 
               // 🔹 ЛОГИКА ЦЕНЫ: Если обычная доставка — выводим доход курьера
-              final displayPrice = (type == 'normal' || type == 'orders')
-                  ? (data['deliveryPrice'] ?? 0)
-                  : (data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0);
+              // 🔹 ЛОГИКА ЦЕНЫ: Проверяем все возможные ключи цены в базе (включая total_cost)
+              final displayPrice = data['deliveryPrice'] ??
+                  data['totalPrice'] ??
+                  data['totalCost'] ??
+                  data['total_cost'] ?? // <--- Добавили ваш ключ из базы
+                  data['total'] ??
+                  0;
 
               return _buildOrderCard(context, doc, type, status, displayPrice, clientName);
             },
@@ -123,7 +127,7 @@ class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
                   ),
                 ),
                 Text(
-                  '$price Руб',
+                  '${(price is num ? price : double.tryParse(price.toString()) ?? 0.0).toStringAsFixed(2)} Руб',
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
                 ),
               ],

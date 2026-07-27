@@ -3,10 +3,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 // Твои импорты деталей
-import 'active_detail.dart';
-import 'gorod_detail.dart';
-import 'mejgorod_detail.dart';
-import 'srok_detail.dart';
+import 'detail_screen/active_detail.dart';
+import 'NO_USED_SCREEN/gorod_detail.dart';
+import 'NO_USED_SCREEN/mejgorod_detail.dart';
+import 'detail_screen/srok_detail.dart';
 
 class OrderHistoryScreen extends StatelessWidget {
   final String courierId;

@@ -15,7 +15,8 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen>
     with SingleTickerProviderStateMixin {
-  final TextEditingController phoneController = TextEditingController();
+
+  final TextEditingController callsignController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
   bool loading = false;
@@ -26,15 +27,14 @@ class _LoginScreenState extends State<LoginScreen>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  // --- LUXURY EMERALD & GOLD PALETTE ---
+  // --- СВЕТЛАЯ И ДОРОГАЯ ПРЕМИАЛЬНАЯ ПАЛИТРА ---
   static const primaryGradient = LinearGradient(
-    colors: [Color(0xFF047857), Color(0xFF10B981)], // Deep Emerald to Vibrant Mint
+    colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)], // Благородный глубокий синий
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
-  static const goldAccent = Color(0xFFD97706); // Warm Metallic Gold
-  static const surfaceBackground = Color(0xFFFAFAF9); // Pure Warm Pearl
+  static const surfaceBackground = Color(0xFFF8FAFC); // Чистый светлый фон
   static const cardBackground = Color(0xFFFFFFFF);
   static const textMain = Color(0xFF0F172A);
   static const textMuted = Color(0xFF64748B);
@@ -42,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   void initState() {
     super.initState();
-    phoneController.text = '+373 ';
+    // Больше не нужен префикс телефона по умолчанию
 
     _animationController = AnimationController(
       vsync: this,
@@ -70,12 +70,11 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   void dispose() {
     _animationController.dispose();
-    phoneController.dispose();
+    callsignController.dispose();
     passwordController.dispose();
     super.dispose();
   }
 
-  // --- ЛОГИКА ВХОДА ---
   Future<void> _updateFcmToken(String courierId) async {
     try {
       String? token = await FirebaseMessaging.instance.getToken();
@@ -95,11 +94,12 @@ class _LoginScreenState extends State<LoginScreen>
 
   Future<void> _login() async {
     FocusScope.of(context).unfocus();
-    final phone = phoneController.text.replaceAll(' ', '');
+    // Получаем позывной, приводим к строке и убираем лишние пробелы
+    final callsign = callsignController.text.trim();
     final password = passwordController.text.trim();
 
-    if (phone.length < 12 || password.isEmpty) {
-      setState(() => errorText = 'Введите 8 цифр номера и пароль');
+    if (callsign.isEmpty || password.isEmpty) {
+      setState(() => errorText = 'Введите позывной и пароль');
       return;
     }
 
@@ -109,9 +109,10 @@ class _LoginScreenState extends State<LoginScreen>
     });
 
     try {
+      // Поиск в Firestore по полю 'callsign' вместо 'phone'
       final query = await FirebaseFirestore.instance
           .collection('couriers')
-          .where('phone', isEqualTo: phone)
+          .where('callsign', isEqualTo: callsign)
           .where('password', isEqualTo: password)
           .where('active', isEqualTo: true)
           .limit(1)
@@ -119,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen>
 
       if (query.docs.isEmpty) {
         setState(() {
-          errorText = 'Аккаунт не найден или деактивирован';
+          errorText = 'Курьер с таким позывным не найден или деактивирован';
           loading = false;
         });
         return;
@@ -137,7 +138,8 @@ class _LoginScreenState extends State<LoginScreen>
         MaterialPageRoute(
           builder: (_) => CourierMainScreen(
             courierId: courierDoc.id,
-            courierPhone: courierData['phone'] ?? '',
+            // Передаем позывной вместо телефона, либо оставляем пустую строку/телефон если требуется в HomeScreen
+            courierPhone: courierData['callsign'] ?? '',
           ),
         ),
             (route) => false,
@@ -160,12 +162,11 @@ class _LoginScreenState extends State<LoginScreen>
         onTap: () => FocusScope.of(context).unfocus(),
         child: Stack(
           children: [
-            // --- ТЁПЛЫЕ ПРЕМИАЛЬНЫЕ СВЕЧЕНИЯ НА ФОНЕ ---
             Positioned(
               top: -size.width * 0.3,
               right: -size.width * 0.2,
               child: _buildGradientBlob(
-                color: const Color(0xFF10B981).withOpacity(0.12),
+                color: const Color(0xFF3B82F6).withOpacity(0.08),
                 radius: size.width * 0.85,
               ),
             ),
@@ -173,19 +174,16 @@ class _LoginScreenState extends State<LoginScreen>
               bottom: -size.width * 0.35,
               left: -size.width * 0.2,
               child: _buildGradientBlob(
-                color: goldAccent.withOpacity(0.08),
+                color: const Color(0xFF6366F1).withOpacity(0.06),
                 radius: size.width * 0.9,
               ),
             ),
-
-            // Эффект мягкого матового стекла
             Positioned.fill(
               child: BackdropFilter(
                 filter: ImageFilter.blur(sigmaX: 90, sigmaY: 90),
                 child: const SizedBox.expand(),
               ),
             ),
-
             SafeArea(
               child: Center(
                 child: SingleChildScrollView(
@@ -201,53 +199,34 @@ class _LoginScreenState extends State<LoginScreen>
                           const SizedBox(height: 10),
                           _buildHeaderLogo(),
                           const SizedBox(height: 36),
-
-                          // --- КАРТОЧКА ФОРМЫ С ЗОЛОТИСТОЙ ОКОЙМКОЙ ---
                           Container(
                             padding: const EdgeInsets.all(28),
                             decoration: BoxDecoration(
                               color: cardBackground,
                               borderRadius: BorderRadius.circular(32),
                               border: Border.all(
-                                color: const Color(0xFFF1F5F9),
+                                color: const Color(0xFFE2E8F0),
                                 width: 1.5,
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: const Color(0xFF0F172A).withOpacity(0.04),
-                                  blurRadius: 40,
-                                  offset: const Offset(0, 20),
-                                ),
-                                BoxShadow(
-                                  color: const Color(0xFF047857).withOpacity(0.03),
-                                  blurRadius: 15,
-                                  offset: const Offset(0, 4),
+                                  color: const Color(0xFF0F172A).withOpacity(0.05),
+                                  blurRadius: 30,
+                                  offset: const Offset(0, 15),
                                 ),
                               ],
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _buildLabel("ТЕЛЕФОН КУРЬЕРА"),
+                                _buildLabel("ПОЗЫВНОЙ"),
                                 _buildField(
-                                  controller: phoneController,
-                                  icon: Icons.phone_iphone_rounded,
-                                  hint: "77X XX XXX",
-                                  isPhone: true,
-                                  onChanged: (value) {
-                                    if (!value.startsWith('+373 ')) {
-                                      phoneController.text = '+373 ';
-                                      phoneController.selection =
-                                          TextSelection.fromPosition(
-                                            TextPosition(
-                                              offset: phoneController.text.length,
-                                            ),
-                                          );
-                                    }
-                                  },
+                                  controller: callsignController,
+                                  icon: Icons.badge_rounded,
+                                  hint: "Введите позывной",
                                 ),
                                 const SizedBox(height: 22),
-                                _buildLabel("ПАРОЛЬ ДОСТУПА"),
+                                _buildLabel("ПАРОЛЬ"),
                                 _buildField(
                                   controller: passwordController,
                                   icon: Icons.lock_outline_rounded,
@@ -260,10 +239,7 @@ class _LoginScreenState extends State<LoginScreen>
                               ],
                             ),
                           ),
-
-                          const SizedBox(height: 36),
-                          _buildFooterVersion(),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 24),
                         ],
                       ),
                     ),
@@ -277,92 +253,62 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  // --- РОСКОШНЫЙ ЛОГОТИП И ШРИФТЫ ---
   Widget _buildHeaderLogo() {
     return Column(
       children: [
         Container(
-          height: 88,
-          width: 88,
+          height: 80,
+          width: 80,
           decoration: BoxDecoration(
             gradient: primaryGradient,
-            borderRadius: BorderRadius.circular(28),
+            borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF047857).withOpacity(0.35),
-                blurRadius: 24,
-                offset: const Offset(0, 12),
+                color: const Color(0xFF2563EB).withOpacity(0.3),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
               ),
             ],
           ),
           child: const Icon(
             Icons.delivery_dining_rounded,
-            size: 48,
+            size: 40,
             color: Colors.white,
           ),
         ),
         const SizedBox(height: 20),
-        RichText(
-          text: const TextSpan(
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.8,
-              color: textMain,
-            ),
-            children: [
-              TextSpan(text: 'COURIER'),
-              TextSpan(
-                text: ' PRO',
-                style: TextStyle(color: Color(0xFF047857)),
-              ),
-            ],
+        const Text(
+          'Вход для курьеров',
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.5,
+            color: textMain,
           ),
         ),
         const SizedBox(height: 6),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFEF3C7), // Soft Gold Fill
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: goldAccent.withOpacity(0.3)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.workspace_premium_rounded, size: 12, color: goldAccent),
-                  SizedBox(width: 4),
-                  Text(
-                    'EXPRESS TERMINAL',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      color: goldAccent,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        const Text(
+          'Введите данные для доступа к заказам',
+          style: TextStyle(
+            fontSize: 13,
+            color: textMuted,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ],
     );
   }
 
-  // --- МЕТКИ И ПОЛЯ ВВОДА ---
   Widget _buildLabel(String text) {
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),
       child: Text(
         text,
         style: const TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
           color: textMuted,
-          letterSpacing: 1.2,
+          letterSpacing: 0.8,
         ),
       ),
     );
@@ -373,8 +319,6 @@ class _LoginScreenState extends State<LoginScreen>
     required IconData icon,
     required String hint,
     bool isPassword = false,
-    bool isPhone = false,
-    Function(String)? onChanged,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -385,27 +329,19 @@ class _LoginScreenState extends State<LoginScreen>
       child: TextField(
         controller: controller,
         obscureText: isPassword && !isPasswordVisible,
-        onChanged: onChanged,
         style: const TextStyle(
           fontSize: 15,
           fontWeight: FontWeight.w700,
           color: textMain,
         ),
-        keyboardType: isPhone ? TextInputType.number : TextInputType.text,
-        inputFormatters: isPhone
-            ? [
-          FilteringTextInputFormatter.allow(RegExp(r'[0-9+ ]')),
-          LengthLimitingTextInputFormatter(13),
-        ]
-            : [],
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: TextStyle(
-            color: textMuted.withOpacity(0.5),
+            color: textMuted.withOpacity(0.4),
             fontSize: 14,
             fontWeight: FontWeight.w500,
           ),
-          prefixIcon: Icon(icon, color: const Color(0xFF047857), size: 22),
+          prefixIcon: Icon(icon, color: const Color(0xFF2563EB), size: 22),
           suffixIcon: isPassword
               ? IconButton(
             icon: Icon(
@@ -432,7 +368,6 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  // --- БЛОК ОШИБКИ ---
   Widget _buildError() {
     return Container(
       margin: const EdgeInsets.only(top: 16),
@@ -465,19 +400,18 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  // --- ПРЕМИАЛЬНАЯ ИЗУМРУДНАЯ КНОПКА ---
   Widget _buildLoginButton() {
     return Container(
       width: double.infinity,
-      height: 60,
+      height: 56,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(20),
         gradient: primaryGradient,
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF047857).withOpacity(0.35),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
+            color: const Color(0xFF2563EB).withOpacity(0.3),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -487,7 +421,7 @@ class _LoginScreenState extends State<LoginScreen>
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(20),
           ),
         ),
         child: loading
@@ -503,12 +437,11 @@ class _LoginScreenState extends State<LoginScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              'ВХОД В ТЕРМИНАЛ',
+              'Войти',
               style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
                 color: Colors.white,
-                letterSpacing: 1.2,
               ),
             ),
             SizedBox(width: 8),
@@ -520,60 +453,6 @@ class _LoginScreenState extends State<LoginScreen>
           ],
         ),
       ),
-    );
-  }
-
-  // --- ПОДПИСЬ ВЕРСИИ С ИНДИКАТОРОМ ---
-  Widget _buildFooterVersion() {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.02),
-                blurRadius: 8,
-              )
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 7,
-                height: 7,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF10B981),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                "Система готова к работе",
-                style: TextStyle(
-                  fontSize: 11,
-                  color: textMain,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          "Версия 1.0.4 • Secure Connection",
-          style: TextStyle(
-            fontSize: 10,
-            color: textMuted,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.5,
-          ),
-        ),
-      ],
     );
   }
 
