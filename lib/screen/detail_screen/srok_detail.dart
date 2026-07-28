@@ -67,6 +67,7 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
     setState(() => loading = true);
     try {
       await FirebaseFirestore.instance.runTransaction((transaction) async {
+        // 1. ВСЕ ЧТЕНИЯ (Reads) выполняем первыми
         DocumentSnapshot freshSnap = await transaction.get(widget.orderRef);
         if (!freshSnap.exists) throw Exception('Заказ не найден');
 
@@ -78,6 +79,16 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
           throw Exception('Этот заказ уже взял другой курьер!');
         }
 
+        DocumentReference clientOrderRef = FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .collection('delivery_orders')
+            .doc(widget.orderRef.id);
+
+        // Читаем клиентский документ тоже до любых записей
+        DocumentSnapshot clientSnap = await transaction.get(clientOrderRef);
+
+        // 2. ВСЕ ЗАПИСИ (Writes) выполняем после всех чтений
         final actionTime = FieldValue.serverTimestamp();
 
         Map<String, dynamic> updateData = {
@@ -95,16 +106,15 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
           updateData['deliveredAt'] = actionTime;
         }
 
+        // Обновляем текущий заказ
         transaction.update(widget.orderRef, updateData);
 
-        DocumentReference clientOrderRef = FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .collection('delivery_orders')
-            .doc(widget.orderRef.id);
+        // Обновляем клиентский заказ, если он существует
+        if (clientSnap.exists) {
+          transaction.update(clientOrderRef, updateData);
+        }
 
-        transaction.update(clientOrderRef, updateData);
-
+        // Записываем историю курьера
         if (['accepted', 'inProgress', 'delivered'].contains(action)) {
           DocumentReference historyRef = FirebaseFirestore.instance
               .collection('couriers')
@@ -118,6 +128,25 @@ class _SrokOrderDetailScreenState extends State<SrokOrderDetailScreen> {
             'type': 'delivery',
             'actionAt': actionTime,
           }, SetOptions(merge: true));
+        }
+
+        // 3. ОБНОВЛЕНИЕ СТАТУСА КУРЬЕРА (currentOrderId)
+        DocumentReference courierRef = FirebaseFirestore.instance
+            .collection('couriers')
+            .doc(widget.courierId);
+
+        if (action == 'delivered') {
+          // Если заказ доставлен — сбрасываем currentOrderId (делаем пустым/удаляем)
+          transaction.update(courierRef, {
+            'currentOrderId': FieldValue.delete(),
+            'updatedAt': actionTime,
+          });
+        } else if (action == 'accepted' || action == 'inProgress') {
+          // Если принял или в пути — фиксируем ID активного заказа
+          transaction.update(courierRef, {
+            'currentOrderId': widget.orderRef.id,
+            'updatedAt': actionTime,
+          });
         }
       });
 
@@ -836,7 +865,7 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
     }
   }
 
-  Future<void> _getRouteFromOSRM() async {
+  Future<bool> _getRouteFromOSRM() async {
     final url = 'https://router.project-osrm.org/route/v1/driving/'
         '${widget.restaurantLocation!.longitude},${widget.restaurantLocation!.latitude};'
         '${widget.targetLocation.longitude},${widget.targetLocation.latitude}'
@@ -849,10 +878,12 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
         setState(() {
           routePoints = coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList();
         });
+        return true;
       }
     } catch (e) {
       debugPrint('OSRM Error: $e');
     }
+    return false;
   }
 
   void _fitMarkers() {

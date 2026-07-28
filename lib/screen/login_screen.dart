@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -128,6 +129,10 @@ class _LoginScreenState extends State<LoginScreen>
 
       final courierDoc = query.docs.first;
       final courierData = courierDoc.data();
+
+      // 🔹 Сохраняем ID курьера локально, чтобы при перезапуске сессия не сбрасывалась
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('saved_courier_id', courierDoc.id);
 
       await _updateFcmToken(courierDoc.id);
 

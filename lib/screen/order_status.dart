@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// Твои импорты экранов деталей
-import 'detail_screen/active_detail.dart'; // Предположим, тут CourierOrderDetailScreen
-import 'NO_USED_SCREEN/gorod_detail.dart';
-import 'NO_USED_SCREEN/mejgorod_detail.dart';
+import 'detail_screen/active_detail.dart';
 import 'detail_screen/srok_detail.dart';
 
 class OrdersStatusScreen extends StatefulWidget {
@@ -22,234 +19,142 @@ class OrdersStatusScreen extends StatefulWidget {
 }
 
 class _OrdersStatusScreenState extends State<OrdersStatusScreen> {
+  static const Color appBg = Color(0xFFF1F5F9);
+  static const Color primaryBlue = Color(0xFF2563EB);
+  static const Color textDark = Color(0xFF0F172A);
+  static const Color textMuted = Color(0xFF64748B);
+
+  // Фиксированный ключ навигатора предотвращает пересоздание дерева при обновлении стрима
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  // Кэшируем ID последнего активного заказа, чтобы избежать лишней перерисовки роутера
+  String? _lastLoadedOrderId;
+
   @override
   Widget build(BuildContext context) {
-    // Сортировка по времени принятия (нужен индекс в Firestore)
-    final ordersQuery = FirebaseFirestore.instance
+    // Слушаем активные заказы курьера в его истории
+    final activeOrderQuery = FirebaseFirestore.instance
         .collection('couriers')
         .doc(widget.courierId)
         .collection('history')
         .where('status', whereIn: ['accepted', 'inProgress'])
-        .orderBy('acceptedAt', descending: true);
+        .orderBy('acceptedAt', descending: true)
+        .limit(1);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        title: const Text(
-          'Активные заказы',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20, color: Color(0xFF1E293B)),
-        ),
-        centerTitle: true,
-        elevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-      ),
+      backgroundColor: appBg,
       body: StreamBuilder<QuerySnapshot>(
-        stream: ordersQuery.snapshots(),
+        stream: activeOrderQuery.snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return Center(child: Text('Ошибка: ${snapshot.error}'));
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: Colors.indigo));
+          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator(color: primaryBlue));
           }
 
-          final orders = snapshot.data!.docs;
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'Ошибка загрузки: ${snapshot.error}',
+                  style: const TextStyle(color: textMuted),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
 
-          if (orders.isEmpty) {
+          final docs = snapshot.data?.docs ?? [];
+
+          if (docs.isEmpty) {
+            _lastLoadedOrderId = null;
             return _buildEmptyState();
           }
 
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: orders.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final doc = orders[index];
-              final data = doc.data() as Map<String, dynamic>;
+          final doc = docs.first;
+          final data = doc.data() as Map<String, dynamic>;
+          final String currentOrderId = doc.id;
 
-              // Определяем данные для карточки
-              final type = (data['type'] ?? 'normal').toString();
-              final status = data['status'] ?? '';
-              final clientName = data['clientName'] ?? 'Без имени';
+          // Проверяем все возможные варианты поля типа заказа
+          final String type = (data['type'] ?? data['orderType'] ?? data['deliveryType'] ?? 'normal')
+              .toString()
+              .toLowerCase()
+              .trim();
 
-              // 🔹 ЛОГИКА ЦЕНЫ: Если обычная доставка — выводим доход курьера
-              // 🔹 ЛОГИКА ЦЕНЫ: Проверяем все возможные ключи цены в базе (включая total_cost)
-              final displayPrice = data['deliveryPrice'] ??
-                  data['totalPrice'] ??
-                  data['totalCost'] ??
-                  data['total_cost'] ?? // <--- Добавили ваш ключ из базы
-                  data['total'] ??
-                  0;
+          // Надежное определение индивидуальной/срочной доставки
+          final bool isDeliveryOrder = type == 'express' ||
+              type == 'delivery' ||
+              type == 'individual' ||
+              type == 'delivery_order' ||
+              type == 'срочный' ||
+              doc.reference.path.contains('delivery_orders');
 
-              return _buildOrderCard(context, doc, type, status, displayPrice, clientName);
-            },
+          // Ссылка на сам документ в истории курьера
+          final orderRef = doc.reference;
+
+          // Если это тот же самый заказ (например, сменился статус с accepted на inProgress),
+          // мы не пересоздаем весь Navigator заново, а позволяем внутреннему экрану обновиться по своему StreamBuilder.
+          bool isSameOrder = _lastLoadedOrderId == currentOrderId;
+          _lastLoadedOrderId = currentOrderId;
+
+          return PopScope(
+            canPop: false,
+            child: Navigator(
+              key: isSameOrder ? _navigatorKey : GlobalKey<NavigatorState>(),
+              onGenerateRoute: (settings) {
+                if (!isSameOrder) {
+                  _lastLoadedOrderId = currentOrderId;
+                }
+                Widget page;
+                if (isDeliveryOrder) {
+                  page = SrokOrderDetailScreen(
+                    orderRef: orderRef,
+                    courierId: widget.courierId,
+                    courierPhone: widget.courierPhone,
+                  );
+                } else {
+                  page = CourierOrderDetailScreen(
+                    orderRef: orderRef,
+                    courierId: widget.courierId,
+                    courierPhone: widget.courierPhone,
+                  );
+                }
+                return MaterialPageRoute(builder: (context) => page);
+              },
+            ),
           );
         },
       ),
     );
   }
 
-  Widget _buildOrderCard(BuildContext context, DocumentSnapshot doc, String type, String status, dynamic price, String clientName) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: const Color(0xFF1E293B).withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => _navigateToDetail(context, type, doc),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                _buildLeadingIcon(type),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '№${doc.id.substring(0, 6).toUpperCase()}',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF94A3B8)),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        clientName,
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
-                      ),
-                      const SizedBox(height: 8),
-                      _statusBadge(status),
-                    ],
-                  ),
-                ),
-                Text(
-                  '${(price is num ? price : double.tryParse(price.toString()) ?? 0.0).toStringAsFixed(2)} Руб',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _navigateToDetail(BuildContext context, String type, DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    final String userId = data['userId'] ?? '';
-    final String orderId = doc.id;
-
-    if (userId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ошибка: Не найден ID пользователя'))
-      );
-      return;
-    }
-
-    String collectionName;
-    final String t = type.toLowerCase().trim();
-
-    if (t == 'city') {
-      collectionName = 'cityOrders';
-    } else if (t == 'mejcity') {
-      collectionName = 'intercityOrders';
-    } else if (t == 'express' || t == 'delivery') {
-      collectionName = 'delivery_orders';
-    } else {
-      collectionName = 'delivery_orders'; // Для обычных заказов
-    }
-
-    final orderRef = FirebaseFirestore.instance
-        .collection('users')
-        .doc(userId)
-        .collection(collectionName)
-        .doc(orderId);
-
-    Widget screen;
-    switch (collectionName) {
-      case 'cityOrders':
-        screen = GorodOrderDetailScreen(
-            orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
-        break;
-      case 'intercityOrders':
-        screen = IntercityOrderDetailScreen(
-            orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
-        break;
-      case 'delivery_orders':
-      // Здесь решаем, обычный экран или для срочных (если логика разная)
-        if (t == 'express' || t == 'delivery') {
-          screen = SrokOrderDetailScreen(
-              orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
-        } else {
-          screen = CourierOrderDetailScreen(
-              orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
-        }
-        break;
-      default:
-        screen = CourierOrderDetailScreen(
-            orderRef: orderRef, courierId: widget.courierId, courierPhone: widget.courierPhone);
-    }
-
-    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
-  }
-
   Widget _buildEmptyState() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.layers_clear_outlined, size: 80, color: Colors.grey[300]),
-          const SizedBox(height: 16),
-          const Text(
-            'У вас нет активных заказов',
-            style: TextStyle(color: Color(0xFF64748B), fontSize: 16, fontWeight: FontWeight.w500),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLeadingIcon(String type) {
-    IconData icon;
-    Color color;
-    switch (type.toLowerCase()) {
-      case 'city':
-        icon = Icons.location_city_rounded;
-        color = Colors.blue;
-        break;
-      case 'mejcity':
-        icon = Icons.local_shipping_rounded;
-        color = Colors.teal;
-        break;
-      case 'express':
-      case 'delivery':
-        icon = Icons.bolt_rounded;
-        color = Colors.orange;
-        break;
-      default:
-        icon = Icons.shopping_bag_rounded;
-        color = Colors.deepPurple;
-    }
-    return Container(
-      width: 52, height: 52,
-      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(16)),
-      child: Icon(icon, color: color, size: 28),
-    );
-  }
-
-  Widget _statusBadge(String status) {
-    bool inProgress = status == 'inProgress';
-    final Color color = inProgress ? const Color(0xFF3B82F6) : const Color(0xFFF59E0B);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-      child: Text(
-        inProgress ? 'В ПУТИ' : 'ПРИНЯТ',
-        style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800),
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: primaryBlue.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.delivery_dining_rounded, size: 64, color: primaryBlue),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'НЕТ АКТИВНЫХ ЗАКАЗОВ',
+              style: TextStyle(color: textDark, fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'У вас пока нет заказов в работе. Ожидайте новые назначения.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: textMuted, fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
       ),
     );
   }

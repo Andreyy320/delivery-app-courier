@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -13,18 +14,25 @@ class OrderHistoryScreen extends StatelessWidget {
 
   const OrderHistoryScreen({super.key, required this.courierId});
 
-  // Бейдж типа заказа
+  // Бейдж типа заказа (с поддержкой индивидуальной доставки)
   Widget _buildTypeBadge(String type) {
     String label;
     Color color;
 
     switch (type) {
-      case 'normal': label = 'ДОСТАВКА'; color = Colors.orange[700]!; break;
+      case 'normal':
+      case 'standard_order':
+        label = 'ДОСТАВКА';
+        color = Colors.orange[700]!;
+        break;
       case 'express':
-      case 'delivery': label = 'СРОЧНО'; color = Colors.red[800]!; break;
-      case 'city': label = 'ГОРОД'; color = Colors.blue[700]!; break;
-      case 'mejCity': label = 'МЕЖГОРОД'; color = Colors.teal[700]!; break;
-      default: label = 'ЗАКАЗ'; color = Colors.grey[700]!;
+      case 'delivery':
+        label = 'ИНДИВИДУАЛЬНАЯ';
+        color = Colors.indigo[700]!;
+        break;
+      default:
+        label = 'ЗАКАЗ';
+        color = Colors.grey[700]!;
     }
 
     return Container(
@@ -90,15 +98,24 @@ class OrderHistoryScreen extends StatelessWidget {
               final doc = orders[index];
               final data = doc.data() as Map<String, dynamic>;
 
-              final type = data['type'] ?? 'normal';
+              final type = (data['type'] ?? data['orderType'] ?? data['deliveryType'] ?? 'normal')
+                  .toString()
+                  .toLowerCase()
+                  .trim();
+
               final clientName = data['clientName'] ?? 'Без имени';
 
               // 🔹 ЛОГИКА ЦЕНЫ ДЛЯ ИСТОРИИ КУРЬЕРА:
-              // Если это обычная доставка — показываем доход курьера (deliveryPrice).
-              // Для остальных типов показываем общую стоимость заказа.
-              final displayPrice = (type == 'normal')
+              final rawPrice = (type == 'normal')
                   ? (data['deliveryPrice'] ?? 0)
-                  : (data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0);
+                  : (data['total_cost'] ?? data['deliveryPrice'] ?? data['totalPrice'] ?? data['totalCost'] ?? data['total'] ?? 0);
+
+              // Конвертируем в double и округляем до 2 знаков после запятой
+              final double numericPrice = rawPrice is num
+                  ? rawPrice.toDouble()
+                  : double.tryParse(rawPrice.toString()) ?? 0.0;
+
+              final displayPriceStr = numericPrice.toStringAsFixed(2);
 
               final updatedAt = data['updatedAt'] as Timestamp?;
               final dateStr = updatedAt != null
@@ -129,7 +146,7 @@ class OrderHistoryScreen extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Заказ №${doc.id.substring(0, 6)}'.toUpperCase(),
+                                  'Заказ №${doc.id.substring(0, min(6, doc.id.length))}'.toUpperCase(),
                                   style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500),
                                 ),
                                 const SizedBox(height: 4),
@@ -147,8 +164,8 @@ class OrderHistoryScreen extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              // 🔹 ОТОБРАЖАЕМ ВЫЧИСЛЕННУЮ ЦЕНУ
-                              Text('$displayPrice Руб', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Colors.black87)),
+                              // 🔹 ОТОБРАЖАЕМ ЦЕНУ С 2 ЗНАКАМИ ПОСЛЕ ЗАПЯТОЙ
+                              Text('$displayPriceStr Руб', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Colors.black87)),
                               const SizedBox(height: 4),
                               Text(dateStr, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
                               const SizedBox(height: 8),
@@ -172,11 +189,27 @@ class OrderHistoryScreen extends StatelessWidget {
     IconData icon;
     Color color;
     switch (type) {
-      case 'city': icon = Icons.location_city; color = Colors.blue; break;
-      case 'mejCity': icon = Icons.map; color = Colors.teal; break;
+      case 'city':
+        icon = Icons.location_city;
+        color = Colors.blue;
+        break;
+      case 'mejCity':
+        icon = Icons.map;
+        color = Colors.teal;
+        break;
       case 'express':
-      case 'delivery': icon = Icons.flash_on; color = Colors.red; break;
-      default: icon = Icons.shopping_bag; color = Colors.orange;
+      case 'delivery':
+        icon = Icons.flash_on;
+        color = Colors.red;
+        break;
+      case 'individual':
+      case 'delivery_order':
+        icon = Icons.local_shipping_rounded;
+        color = Colors.indigo;
+        break;
+      default:
+        icon = Icons.shopping_bag;
+        color = Colors.orange;
     }
     return Container(
       width: 48, height: 48,
@@ -186,37 +219,30 @@ class OrderHistoryScreen extends StatelessWidget {
   }
 
   void _navigateToDetail(BuildContext context, String type, DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    final String userId = data['userId'] ?? '';
     final String orderId = doc.id;
 
-    String collectionName;
-    switch (type) {
-      case 'city': collectionName = 'cityOrders'; break;
-      case 'mejCity': collectionName = 'intercityOrders'; break;
-      default: collectionName = 'delivery_orders';
-    }
-
+    // Ссылка на документ в архиве истории курьера
     final orderRef = FirebaseFirestore.instance
-        .collection('users')
-        .doc(userId)
-        .collection(collectionName)
+        .collection('couriers')
+        .doc(courierId)
+        .collection('history')
         .doc(orderId);
 
     Widget screen;
-    switch (type) {
-      case 'city':
-        screen = GorodOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
-        break;
-      case 'mejCity':
-        screen = IntercityOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
-        break;
-      case 'express':
-      case 'delivery':
-        screen = SrokOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
-        break;
-      default:
-        screen = CourierOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
+    // Индивидуальные и срочные заказы открывают SrokOrderDetailScreen
+    if (type == 'express' || type == 'delivery' || type == 'individual' || type == 'delivery_order') {
+      screen = SrokOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
+    } else {
+      switch (type) {
+        case 'city':
+          screen = GorodOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
+          break;
+        case 'mejCity':
+          screen = IntercityOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
+          break;
+        default:
+          screen = CourierOrderDetailScreen(orderRef: orderRef, courierId: courierId, courierPhone: '');
+      }
     }
     Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
